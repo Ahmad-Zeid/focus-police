@@ -1,0 +1,9 @@
+index,activity,start_s,end_s,duration_s,end_from
+0,hold_cup,13.84,76.84,63.0,click-6s
+1,drinking,151.63,199.56,47.9,click-6s
+2,writing,260.51,344.17,83.7,clap
+3,phone_scroll,351.64,419.7,68.1,clap
+4,other_desk,427.11,491.28,64.2,clap
+5,phone_text,498.6,557.52,58.9,clap
+6,typing,564.54,650.69,86.1,clap
+7,phone_call,658.08,717.03,59.0,clap

@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Focus Police live</title>
+<style>
+:root{
+  --bg:#f6f4ef; --panel:#fffdf8; --ink:#1d1d1b; --mute:#77736a; --rule:#dcd7cc; --grid:#ebe7de;
+  --x:#c0392b; --y:#2e7d4f; --z:#2f5f98;
+  --on:#2f6b3a; --off:#b3261e; --warn:#a8650f;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#161614; --panel:#1f1f1c; --ink:#ece9e2; --mute:#9a958a; --rule:#34332f; --grid:#2a2926;
+  --x:#e57367; --y:#6cc08b; --z:#7aa7e0; --on:#6fbf7d; --off:#ef6b60; --warn:#e0a050;
+}}
+:root[data-theme="dark"]{
+  --bg:#161614; --panel:#1f1f1c; --ink:#ece9e2; --mute:#9a958a; --rule:#34332f; --grid:#2a2926;
+  --x:#e57367; --y:#6cc08b; --z:#7aa7e0; --on:#6fbf7d; --off:#ef6b60; --warn:#e0a050;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif}
+.mono{font-family:'Courier New',Courier,monospace}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 22px;padding:16px 20px;border-bottom:1px solid var(--rule)}
+h1{font-size:1.35rem;margin:0;font-weight:700}
+#conn{font:700 1rem 'Courier New',monospace}
+.ok{color:var(--on)} .bad{color:var(--off)}
+.facts{font:0.85rem 'Courier New',monospace;color:var(--mute)}
+main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr);gap:16px;padding:16px 20px}
+@media (max-width:900px){main{grid-template-columns:1fr} .pred{order:-1}}
+section{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:12px 14px}
+.plot h2,.pred h2{font-size:0.95rem;margin:0 0 2px;font-weight:700}
+.plot .sub{font-size:0.78rem;color:var(--mute);margin-bottom:6px}
+.plot{margin-bottom:12px}
+canvas{display:block;width:100%;height:150px}
+.legend{font:0.75rem 'Courier New',monospace;color:var(--mute)}
+.legend b{display:inline-block;width:14px;height:3px;vertical-align:middle;margin:0 4px 0 10px}
+#label{font-size:2.4rem;font-weight:700;margin:6px 0 0;line-height:1.1;word-break:break-word}
+#task{font:700 1.1rem 'Courier New',monospace;letter-spacing:.06em;margin:4px 0 10px}
+.bar{height:10px;background:var(--grid);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ink)}
+table{width:100%;border-collapse:collapse;font:0.85rem 'Courier New',monospace;margin-top:10px}
+td{padding:3px 0;vertical-align:middle} td.n{width:42%} td.v{width:16%;text-align:right;padding-left:8px}
+#model{font-size:0.82rem;color:var(--mute);margin-top:12px;border-top:1px solid var(--rule);padding-top:10px;line-height:1.45}
+#model strong{color:var(--ink)}
+.placeholder{color:var(--warn)!important}
+#strip{display:flex;height:22px;margin-top:6px;border:1px solid var(--rule)}
+#strip span{flex:1}
+.stripcap{display:flex;justify-content:space-between;font:0.72rem 'Courier New',monospace;color:var(--mute)}
+#nudge{display:none;background:var(--off);color:#fff;padding:14px 20px;font-size:1.2rem;font-weight:700;text-align:center}
+#nudge.show{display:block}
+</style>
+</head>
+<body>
+<div id="nudge">Off task for <span id="offfor">0</span> s. Phone down?</div>
+<header>
+  <h1>Focus Police: live</h1>
+  <span id="conn">…</span>
+  <span class="facts" id="facts"></span>
+</header>
+<main>
+  <div>
+    <section class="plot">
+      <h2>Motion</h2><div class="sub">acceleration with gravity removed (g), last 10 s</div>
+      <canvas id="c0"></canvas>
+      <div class="legend"><b style="background:var(--x)"></b>X<b style="background:var(--y)"></b>Y<b style="background:var(--z)"></b>Z</div>
+    </section>
+    <section class="plot">
+      <h2>Rotation</h2><div class="sub">gyroscope (rad/s)</div>
+      <canvas id="c1"></canvas>
+      <div class="legend"><b style="background:var(--x)"></b>X<b style="background:var(--y)"></b>Y<b style="background:var(--z)"></b>Z</div>
+    </section>
+    <section class="plot">
+      <h2>Wrist angle</h2><div class="sub">gravity direction (g): which way the wrist is tilted</div>
+      <canvas id="c2"></canvas>
+      <div class="legend"><b style="background:var(--x)"></b>X<b style="background:var(--y)"></b>Y<b style="background:var(--z)"></b>Z</div>
+    </section>
+  </div>
+  <section class="pred">
+    <h2>Prediction</h2>
+    <div id="label">—</div>
+    <div id="task">waiting for data</div>
+    <div class="facts">confidence in this guess</div>
+    <div class="bar"><i id="confbar" style="width:0"></i></div>
+    <table id="probs"></table>
+    <div class="facts" style="margin-top:14px">last 2 minutes</div>
+    <div id="strip"></div>
+    <div class="stripcap"><span>−2 min</span><span>now</span></div>
+    <div id="model">…</div>
+  </section>
+</main>
+<script>
+const SPAN = 10;            // seconds shown
+const LAG = 1.3;            // the watch sends once a second, so draw this far behind the newest sample
+const GROUPS = [{i:[1,2,3], lim:1.0}, {i:[4,5,6], lim:3.0}, {i:[7,8,9], lim:1.0, fixed:true}];
+let buf = [], last = 0, showT = null, newest = null, prevFrame = performance.now();
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+async function pull(){
+  try{
+    const r = await (await fetch('/recent?since=' + last, {cache:'no-store'})).json();
+    if (r.rows.length){
+      if (r.rows[0][0] < last - 5 || buf.length && r.rows[0][0] - buf[buf.length-1][0] > 30) buf = [];
+      buf.push(...r.rows); last = r.rows[r.rows.length-1][0]; newest = last;
+      const cut = last - SPAN - 3; let k = 0; while (k < buf.length && buf[k][0] < cut) k++; if (k) buf.splice(0,k);
+    }
+  }catch(e){}
+}
+
+function draw(){
+  const now = performance.now(), dt = (now - prevFrame)/1000; prevFrame = now;
+  if (newest !== null){
+    const target = newest - LAG;
+    if (showT === null || Math.abs(showT - target) > 2) showT = target;
+    else showT += dt + (target - showT) * 0.03;
+  }
+  const colors = [css('--x'), css('--y'), css('--z')];
+  GROUPS.forEach((g, gi) => {
+    const cv = document.getElementById('c'+gi), ctx = cv.getContext('2d');
+    const W = cv.clientWidth, H = cv.clientHeight, d = devicePixelRatio || 1;
+    if (cv.width !== W*d || cv.height !== H*d){ cv.width = W*d; cv.height = H*d; }
+    ctx.setTransform(d,0,0,d,0,0); ctx.clearRect(0,0,W,H);
+    const t1 = showT ?? 0, t0 = t1 - SPAN;
+    let lim = g.lim;
+    if (!g.fixed){ for (const r of buf) if (r[0] >= t0 && r[0] <= t1) for (const i of g.i) lim = Math.max(lim, Math.abs(r[i])*1.1); }
+    const y = v => H/2 - v/lim * (H/2 - 4), x = t => (t - t0)/SPAN * W;
+    ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1; ctx.beginPath();
+    for (let s = Math.ceil(t0); s <= t1; s++){ ctx.moveTo(x(s), 0); ctx.lineTo(x(s), H); }
+    ctx.moveTo(0, y(0)); ctx.lineTo(W, y(0)); ctx.stroke();
+    ctx.fillStyle = css('--mute'); ctx.font = '11px "Courier New", monospace';
+    ctx.fillText('+' + lim.toFixed(lim < 2 ? 1 : 0), 4, 12); ctx.fillText('−' + lim.toFixed(lim < 2 ? 1 : 0), 4, H - 4);
+    g.i.forEach((col, ci) => {
+      ctx.strokeStyle = colors[ci]; ctx.lineWidth = 1.4; ctx.beginPath(); let started = false;
+      for (const r of buf){
+        if (r[0] < t0 - 0.1) continue; if (r[0] > t1) break;
+        if (!started){ ctx.moveTo(x(r[0]), y(r[col])); started = true; } else ctx.lineTo(x(r[0]), y(r[col]));
+      }
+      ctx.stroke();
+    });
+  });
+  requestAnimationFrame(draw);
+}
+
+const pct = v => Math.round(v * 100) + '%';
+function stripColor(on){ return on === true ? css('--on') : on === false ? css('--off') : css('--grid'); }
+
+async function status(){
+  try{
+    const s = await (await fetch('/status', {cache:'no-store'})).json();
+    conn.textContent = s.connected ? '● watch connected' : '○ no data' + (s.seconds_since ? ' for ' + Math.round(s.seconds_since) + ' s' : '');
+    conn.className = s.connected ? 'ok' : 'bad';
+    facts.textContent = [s.device, s.rate_hz + ' Hz', 'delay ' + (s.delay_s ?? '—') + ' s', (s.total||0) + ' samples', s.session ? 'session ' + s.session : ''].filter(Boolean).join(' · ');
+  }catch(e){ conn.textContent = 'receiver down'; conn.className = 'bad'; }
+  try{
+    const p = await (await fetch('/predict', {cache:'no-store'})).json();
+    const placeholder = (p.model || '').startsWith('PLACEHOLDER');
+    if (p.error){ label.textContent = 'model error'; task.textContent = p.error; task.style.color = css('--off'); }
+    else if (!p.label){ label.textContent = '—'; task.textContent = 'waiting for data'; task.style.color = css('--mute'); }
+    else{
+      label.textContent = p.label.replace(/_/g, ' ');
+      task.textContent = p.on_task === true ? 'ON TASK' : p.on_task === false ? 'OFF TASK' : '';
+      task.style.color = p.on_task === false ? css('--off') : css('--on');
+    }
+    const conf = p.label ? (p.probs[p.label] || 0) : 0;
+    confbar.style.width = pct(conf);
+    probs.innerHTML = Object.entries(p.probs || {}).sort((a,b) => b[1]-a[1]).map(([k,v]) =>
+      `<tr><td class="n">${k.replace(/_/g,' ')}</td><td><div class="bar"><i style="width:${pct(v)}"></i></div></td><td class="v">${pct(v)}</td></tr>`).join('');
+    const h = p.history || [], tEnd = h.length ? h[h.length-1][0] : 0, cells = [];
+    for (let k = 0; k < 120; k++){
+      const a = tEnd - 120 + k, hit = h.filter(e => e[0] > a && e[0] <= a + 1);
+      cells.push(`<span style="background:${hit.length ? stripColor(hit[hit.length-1][3]) : css('--grid')}"></span>`);
+    }
+    strip.innerHTML = cells.join('');
+    model.innerHTML = `<strong class="${placeholder ? 'placeholder' : ''}">${p.model || 'no model loaded'}</strong><br>` +
+      (p.test_accuracy != null ? `Accuracy (${p.accuracy_kind || 'held-out test session'}): <strong>${pct(p.test_accuracy)}</strong>.<br>` :
+        `Accuracy: <strong>not measured yet</strong>. It comes from the test session after training.<br>`) +
+      `The bar above is the model's confidence in its current guess, not its accuracy.` +
+      (placeholder ? `<br><span class="placeholder">Placeholder rules so the screen can be tested. Not a result.</span>` : '');
+    nudge.classList.toggle('show', !!p.nudge); offfor.textContent = Math.round(p.off_for || 0);
+  }catch(e){}
+}
+
+setInterval(pull, 250); setInterval(status, 500); pull(); status(); requestAnimationFrame(draw);
+</script>
+</body>
+</html>

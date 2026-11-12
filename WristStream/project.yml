@@ -1,0 +1,29 @@
+name: WristStream
+options:
+  deploymentTarget:
+    watchOS: "8.0"
+targets:
+  WristStream:
+    type: application
+    platform: watchOS
+    sources: [WristStream]
+    info:
+      path: WristStream/Info.plist
+      properties:
+        CFBundleDisplayName: WristStream
+        WKApplication: true
+        WKWatchOnly: true
+        WKBackgroundModes: [physical-therapy]
+        NSMotionUsageDescription: Streams wrist motion to your laptop for the Focus Police project.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: edu.aub.cmps297.focuspolice.wriststream
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        TARGETED_DEVICE_FAMILY: "4"
+        SWIFT_VERSION: "5.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"

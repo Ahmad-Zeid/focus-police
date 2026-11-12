@@ -1,0 +1,9 @@
+session,participant,watch_wrist,dominant_hand,posture,index,round,activity,event,epoch_ms,iso_time,note
+S1,P1,left,right,sitting,-1,,,session_open,1794519215392,2026-11-12T21:33:35.392Z,""
+S1,P1,left,right,sitting,0,1,hold_cup,start,1794519251055,2026-11-12T21:34:11.055Z,""
+S1,P1,left,right,sitting,0,1,hold_cup,note,1794519336834,2026-11-12T21:35:36.834Z,"it was a water bottle not cup"
+S1,P1,left,right,sitting,0,1,hold_cup,note,1794519384679,2026-11-12T21:36:24.679Z,"i stopped holding the botle at +0:12"
+S1,P1,left,right,sitting,0,1,hold_cup,end,1794519388838,2026-11-12T21:36:28.838Z,""
+S1,P1,left,right,sitting,1,1,drinking,start,1794519388838,2026-11-12T21:36:28.838Z,""
+S1,P1,left,right,sitting,1,1,drinking,end,1794519445776,2026-11-12T21:37:25.776Z,""
+S1,P1,left,right,sitting,-1,,,session_end,1794519445776,2026-11-12T21:37:25.776Z,""

@@ -1,0 +1,25 @@
+{
+ "session": "20261112-083255",
+ "cols": [
+  "time",
+  "userAccelerationX",
+  "userAccelerationY",
+  "userAccelerationZ",
+  "gravityX",
+  "gravityY",
+  "gravityZ",
+  "rotationRateX",
+  "rotationRateY",
+  "rotationRateZ",
+  "roll",
+  "pitch",
+  "yaw",
+  "accX",
+  "accY",
+  "accZ"
+ ],
+ "device": "samsung SM-R920",
+ "os": "Android 16",
+ "hz": 50,
+ "first_seen": "2026-11-12 08:32:56"
+}

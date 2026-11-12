@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Runner</title>
+<style>
+  :root { --bg:#f6f4ef; --fg:#1d1d1b; --muted:#6b6862; --line:#d8d4cb; --card:#fffdf8; --bar:#2f6b3a; --red:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161614; --fg:#ece9e2; --muted:#9a968d; --line:#34322e; --card:#1f1e1b; --bar:#6fbf7d; --red:#c0392b; } }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family: Georgia, serif; transition: background .3s; }
+  .wrap { max-width:820px; margin:0 auto; padding:16px; }
+  h1 { font-size:1.4rem; margin:0 0 4px; }
+  .muted { color:var(--muted); font-size:.92rem; }
+  fieldset { border:1px solid var(--line); background:var(--card); margin:14px 0; padding:12px; }
+  legend { font-family:"Courier New", monospace; font-size:.85rem; padding:0 6px; }
+  label { display:inline-flex; gap:6px; align-items:center; margin:4px 14px 4px 0; }
+  input[type=text], input[type=number], select { font:inherit; padding:4px 6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  button { font:inherit; padding:10px 18px; border:1px solid var(--fg); background:var(--fg); color:var(--bg); cursor:pointer; }
+  button.ghost { background:transparent; color:var(--fg); }
+  ol#order { font-family:"Courier New", monospace; margin:6px 0; padding-left:24px; }
+
+  #stage { display:none; min-height:100vh; padding:24px 16px; text-align:center; flex-direction:column; justify-content:center; align-items:center; gap:10px; }
+  #count { font-family:"Courier New", monospace; letter-spacing:.12em; color:var(--muted); }
+  #act { font-size:clamp(2.2rem, 7vw, 4.4rem); line-height:1.1; max-width:18ch; }
+  #how { color:var(--muted); max-width:46ch; }
+  #clock { font-family:"Courier New", monospace; font-size:clamp(3.5rem, 15vw, 8rem); line-height:1; }
+  #barbox { width:min(560px, 90%); height:10px; border:1px solid var(--line); }
+  #bar { height:100%; width:0; background:var(--bar); }
+  #next { font-size:1.1rem; }
+  #big { font-size:1.3rem; padding:18px 28px; margin-top:8px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top:6px; }
+
+  body.over { background:var(--red); color:#fff; }
+  body.over #count, body.over #how { color:#ffe1dd; }
+  body.over #barbox { border-color:#fff; } body.over #bar { background:#fff; }
+  body.over #big { background:#fff; color:var(--red); border-color:#fff; }
+  body.over button.ghost { color:#fff; border-color:#fff; }
+  #done { display:none; }
+  #watch, #watch2 { font-family:"Courier New", monospace; font-weight:700; }
+  .ok { color:var(--bar); } .bad { color:var(--red); }
+  body.over .bad, body.over .ok { color:#fff; }
+  pre#seglog { text-align:left; font:0.8rem "Courier New", monospace; white-space:pre-wrap; border:1px solid var(--line); background:var(--card); padding:10px; max-height:260px; overflow:auto; }
+  #checkimg { max-width:100%; border:1px solid var(--line); display:none; }
+  table.plan { border-collapse:collapse; font-size:.92rem; } table.plan td { padding:2px 14px 2px 0; vertical-align:top; }
+</style>
+</head>
+<body>
+<div class="wrap" id="setup">
+  <h1>Focus Police: session runner</h1>
+  <p class="muted">Leave this on the second screen. It shows what to do now and how long is left. It makes no sound: when the time is up the whole screen turns <b>red</b> and stays red until you switch. To switch: stop, <b>clap 3×</b>, then click the big button (or press <b>Space</b> with this window focused). The click is the timestamp. Read <code>README.md</code> first.</p>
+  <p id="watch" class="muted"></p>
+
+  <fieldset>
+    <legend>SESSION</legend>
+    <label>Session <select id="session"><option>PILOT</option><option selected>S1</option><option>S2</option><option>S3</option><option>S4</option><option>S5</option><option>S6</option><option>TEST</option><option>NATURAL</option><option>OTHERHAND</option></select></label>
+    <label>Participant <input id="participant" type="text" value="P1" size="5"></label>
+    <label>Watch wrist <select id="wrist"><option>left</option><option>right</option></select></label>
+    <label>Dominant hand <select id="dominant"><option>right</option><option>left</option></select></label>
+    <label>Posture <select id="posture"><option>sitting</option><option>standing</option></select></label>
+    <br><label style="width:100%">What's different this session <input id="setupnote" type="text" placeholder="e.g. desk, laptop keyboard, mug / couch, water bottle" style="flex:1"></label>
+    <table class="plan muted">
+      <tr><td><b>S1…S6</b></td><td>Training sessions. Take the watch off and put it back on between sessions, and change something small each time (seat, cup, where the phone lies).</td></tr>
+      <tr><td><b>TEST</b></td><td>Same format, but kept away from training. The final score comes from this one only.</td></tr>
+      <tr><td><b>NATURAL</b></td><td>No script: real work, then real phone use, three times. Tests how the model does on normal behaviour.</td></tr>
+      <tr><td><b>OTHERHAND</b></td><td>Phone in the hand without the watch. Test only: measures a known weakness.</td></tr>
+    </table>
+  </fieldset>
+  <fieldset>
+    <legend>TIMING</legend>
+    <label>Seconds per block <input id="dur" type="number" value="60" min="15" step="5" style="width:5em"></label>
+    <label>Rounds <input id="rounds" type="number" value="2" min="1" max="6" step="1" style="width:4em"></label>
+    <p class="muted">Every activity comes up once per round, in a new shuffled order each round. Several short blocks teach the model more than one long block, because each block is a fresh start with the hand placed slightly differently. The target is a minimum, not a cut-off: the label ends when you click. PILOT is 2 activities × 20 s. NATURAL has its own fixed timing.</p>
+  </fieldset>
+  <fieldset>
+    <legend>ACTIVITIES (untick what you can't do)</legend>
+    <div id="acts"></div>
+  </fieldset>
+  <fieldset>
+    <legend>BLOCKS FOR THIS SESSION (fixed per session name)</legend>
+    <ol id="order"></ol>
+    <p class="muted" id="total"></p>
+  </fieldset>
+  <button id="go">Open the session</button>
+</div>
+
+<div id="stage">
+  <div id="watch2"></div>
+  <div id="count"></div>
+  <div id="act"></div>
+  <div id="how"></div>
+  <div id="clock"></div>
+  <div id="barbox"><div id="bar"></div></div>
+  <div id="next"></div>
+  <button id="big"></button>
+  <div class="row">
+    <button class="ghost" id="redo" title="Throws away the current activity and starts it again">Redo this one</button>
+    <button class="ghost" id="note">Add a note</button>
+    <button class="ghost" id="quit" title="Stops the WHOLE session, not just this activity">Stop the whole session</button>
+  </div>
+</div>
+
+<div class="wrap" id="done">
+  <h2>Session saved</h2>
+  <p>Stop the watch recording now (after the final claps).</p>
+  <p class="muted" id="fname"></p>
+  <pre id="seglog" style="display:none"></pre>
+  <img id="checkimg" alt="check.png: claps (orange), clicks (blue), labelled spans">
+  <p><button id="dl">Download the timestamp file again</button> <button class="ghost" id="again">Back to setup</button></p>
+</div>
+
+<script>
+// key, what to do, on/off task, how
+const ACTIVITIES = [
+  ["typing",       "Typing on the laptop",          "on-task",  "Your real work is fine: type as you normally would."],
+  ["writing",      "Handwriting on paper",          "on-task",  "Write notes or copy text. Keep the pen moving."],
+  ["idle",         "Reading, hands resting",        "on-task",  "Read the screen. Hands on the desk or in your lap."],
+  ["drinking",     "Drinking",                      "on-task",  "Sip, put the cup down, wait a bit, repeat."],
+  ["hold_cup",     "Holding a cup, not drinking",   "on-task",  "Hold the cup near the desk while you read. No sips."],
+  ["calculator",   "Using a calculator",            "on-task",  "Punch in sums. Hold it in the hand you'd normally use."],
+  ["phone_scroll", "Phone: scrolling a feed",       "off-task", "Phone in the WATCH hand, scroll as usual."],
+  ["phone_text",   "Phone: typing a message",       "off-task", "Phone in the WATCH hand (both thumbs is fine)."],
+  ["phone_call",   "Phone: call at your ear",       "off-task", "Phone at your ear with the WATCH hand. Talk or pretend."],
+  ["other_desk",   "Other small movements",         "on-task",  "Stretch, scratch, fix your hair or glasses, reach for something, shift in the seat. No phone."],
+];
+const NATURAL = [
+  ["natural_work",  "Real work, no script",  "on-task",  "Work the way you actually do: type, read, write, drink, think. Don't perform it."],
+  ["natural_phone", "Real phone use",        "off-task", "Use the phone the way you actually would, in whichever hand. Don't perform it."],
+];
+const OTHERHAND = [
+  ["phone_scroll_other", "Phone: scrolling, OTHER hand", "off-task", "Phone in the hand WITHOUT the watch. Watch hand rests."],
+  ["phone_text_other",   "Phone: typing, OTHER hand",    "off-task", "Phone in the hand WITHOUT the watch."],
+  ["phone_call_other",   "Phone: call, OTHER hand",      "off-task", "Phone at the ear on the side WITHOUT the watch."],
+];
+const ALL = [...ACTIVITIES, ...OTHERHAND, ...NATURAL];
+const info = k => ALL.find(a => a[0] === k);
+const $ = id => document.getElementById(id);
+
+ACTIVITIES.forEach(([k, txt, tag]) => {
+  const l = document.createElement("label");
+  l.innerHTML = `<input type="checkbox" value="${k}" checked> ${txt} <span class="muted">(${tag})</span>`;
+  $("acts").appendChild(l); $("acts").appendChild(document.createElement("br"));
+});
+
+function seeded(str) {
+  let h = 1779033703; for (const c of str) h = Math.imul(h ^ c.charCodeAt(0), 3432918353);
+  return () => { h |= 0; h = h + 0x6D2B79F5 | 0; let t = Math.imul(h ^ h >>> 15, 1 | h); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function shuffle(arr, r) {
+  for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
+  return arr;
+}
+// a session is a list of blocks: {key, round, dur}
+function plan() {
+  const s = $("session").value;
+  const r = seeded("focus-" + s);
+  const dur = Math.max(15, Math.round(+$("dur").value)), rounds = Math.max(1, Math.round(+$("rounds").value));
+  if (s === "NATURAL") {
+    const blocks = [];
+    for (let k = 0; k < 3; k++) { blocks.push({ key: "natural_work", round: k + 1, dur: 180 }); blocks.push({ key: "natural_phone", round: k + 1, dur: 90 }); }
+    return blocks;
+  }
+  let keys = s === "OTHERHAND" ? OTHERHAND.map(a => a[0])
+           : [...$("acts").querySelectorAll("input:checked")].map(i => i.value);
+  if (s === "PILOT") return shuffle([...keys], r).slice(0, 2).map(key => ({ key, round: 1, dur: 20 }));
+  const blocks = [];
+  for (let k = 0; k < rounds; k++) {
+    let order = shuffle([...keys], r);
+    // never the same activity twice in a row across a round boundary
+    if (blocks.length && order.length > 1 && order[0] === blocks[blocks.length - 1].key) order.push(order.shift());
+    order.forEach(key => blocks.push({ key, round: k + 1, dur }));
+  }
+  return blocks;
+}
+function render() {
+  const blocks = plan(), s = $("session").value;
+  const fixed = s === "NATURAL" || s === "PILOT";
+  $("dur").disabled = fixed; $("rounds").disabled = fixed;
+  $("order").innerHTML = blocks.map(b => `<li>${b.key} <span class="muted">· round ${b.round} · ${b.dur} s</span></li>`).join("");
+  const secs = blocks.reduce((a, b) => a + b.dur + 12, 0);
+  $("total").textContent = `${blocks.length} blocks ≈ ${Math.ceil(secs / 60)} min including switches.`;
+}
+let prevSession = "S1";
+$("session").addEventListener("change", () => {
+  const v = $("session").value;
+  if (v === "OTHERHAND") $("rounds").value = 1; else if (prevSession === "OTHERHAND") $("rounds").value = 2;
+  prevSession = v;
+});
+document.querySelectorAll("#setup select, #setup input").forEach(e => e.addEventListener("change", render));
+render();
+
+// ---------- logging ----------
+const rows = [];
+let meta;
+function log(index, activity, event, note = "") {
+  const now = Date.now();
+  const round = index >= 0 && blocks && blocks[index] ? blocks[index].round : "";
+  rows.push([meta.session, meta.participant, meta.wrist, meta.dominant, meta.posture, index, round, activity, event, now,
+             new Date(now).toISOString(), '"' + note.replace(/"/g, "'") + '"']);
+}
+const csv = () => ["session,participant,watch_wrist,dominant_hand,posture,index,round,activity,event,epoch_ms,iso_time,note",
+                   ...rows.map(r => r.join(","))].join("\n");
+const fileName = () => `${meta.session}_${meta.participant}_runner.csv`;
+function download() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv()], { type: "text/csv" }));
+  a.download = fileName(); a.click();
+}
+
+// ---------- stage ----------
+let blocks, i, startedAt, ticker, wakeLock;
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const where = j => `BLOCK ${j + 1} OF ${blocks.length} · ROUND ${blocks[j].round} OF ${blocks[blocks.length - 1].round}`;
+
+function showWaiting(msg, button, nb) {
+  // between activities: nothing is being labelled
+  document.body.className = "";
+  clearInterval(ticker);
+  $("count").textContent = i < blocks.length ? where(Math.max(i, 0)) : "FINISH";
+  $("act").textContent = nb ? info(nb.key)[1] : "Done";
+  $("how").textContent = msg;
+  $("clock").textContent = nb ? fmt(nb.dur) : "";
+  $("bar").style.width = "0";
+  $("next").textContent = "";
+  $("big").textContent = button;
+  $("redo").style.visibility = "hidden";
+  document.title = "Session Runner";
+}
+function startActivity() {
+  const b = blocks[i], n = blocks[i + 1];
+  log(i, b.key, "start");
+  startedAt = performance.now();
+  document.body.className = "";
+  $("count").textContent = `${where(i)} · ${info(b.key)[2].toUpperCase()}`;
+  $("act").textContent = info(b.key)[1];
+  $("how").textContent = info(b.key)[3];
+  $("next").textContent = n ? `Next: ${info(n.key)[1]}` : "Next: finish";
+  $("big").textContent = n ? `Clapped 3× → start “${info(n.key)[1]}”` : "Clapped 3× → finish session";
+  $("redo").style.visibility = "visible";
+  clearInterval(ticker);
+  ticker = setInterval(tick, 200); tick();
+}
+function tick() {
+  const dur = blocks[i].dur;
+  const el = (performance.now() - startedAt) / 1000;
+  const left = dur - el;
+  $("bar").style.width = Math.min(100, el / dur * 100) + "%";
+  if (left > 0) {
+    $("clock").textContent = fmt(left);
+  } else {
+    document.body.className = "over";
+    $("clock").textContent = "+" + fmt(-left);
+    document.title = (Math.floor(-left) % 2 ? "🔴 " : "⬤ ") + "SWITCH NOW";
+  }
+}
+function big() {
+  if (i === -1) {                                              // first click starts block 1
+    if ($("watch2").className === "bad" && !confirm("The watch is NOT streaming to the laptop.\nPress START on the watch first.\n\nStart the session anyway?")) return;
+    i = 0; startActivity(); return;
+  }
+  if (i >= blocks.length) return;
+  log(i, blocks[i].key, "end");
+  i++;
+  if (i < blocks.length) startActivity(); else finish();
+}
+async function openSession() {
+  blocks = plan();
+  meta = { session: $("session").value, participant: $("participant").value.trim() || "P1",
+           wrist: $("wrist").value, dominant: $("dominant").value, posture: $("posture").value };
+  rows.length = 0; i = -1;
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) {}
+  $("setup").style.display = "none"; $("done").style.display = "none"; $("stage").style.display = "flex";
+  log(-1, "", "session_open", $("setupnote").value.trim());
+  showWaiting("1) Press START on the watch.  2) Get ready for this activity.  3) Clap 3×.  4) Click.",
+              "Recording on, clapped 3× → start", blocks[0]);
+}
+async function finish() {
+  clearInterval(ticker);
+  log(-1, "", "session_end");
+  document.body.className = ""; document.title = "Session Runner";
+  $("stage").style.display = "none"; $("done").style.display = "block";
+  wakeLock?.release?.();
+  $("seglog").style.display = "none"; $("checkimg").style.display = "none";
+  // served by the receiver: hand the timestamps over, it files them next to the watch data and labels the session
+  let filed = false;
+  if (location.protocol.startsWith("http")) {
+    $("fname").textContent = "Saving the timestamps next to the watch recording and labelling it…";
+    try {
+      const r = await (await fetch("/runner-log?name=" + encodeURIComponent(fileName()), { method: "POST", body: csv() })).json();
+      filed = !!r.saved;
+      $("fname").innerHTML = filed
+        ? `Timestamps saved in <b>sessions/${r.folder}/</b>${r.merged ? " and <b>added to the earlier run in the same watch recording</b>" : ""}. ` + (r.ok ? "Labelled. Check below that every orange clap bar sits just left of a blue click line. <b>Now press STOP on the watch.</b>" : "<b class='bad'>Labelling reported a problem (below).</b> The recording and the timestamps are safe.")
+        : `<b class="bad">Could not file the timestamps: ${r.error || "unknown"}</b>`;
+      if (r.output) { $("seglog").textContent = r.output; $("seglog").style.display = "block"; }
+      if (r.ok) { $("checkimg").src = "/check?folder=" + encodeURIComponent(r.folder) + "&t=" + Date.now(); $("checkimg").style.display = "block"; }
+    } catch (e) { $("fname").innerHTML = `<b class="bad">The receiver did not answer.</b>`; }
+  }
+  if (!filed) {
+    $("fname").innerHTML += ` Downloaded as ${fileName()}: move it from Downloads into this session's sessions/LIVE_… folder and run segment.py.`;
+    download();
+  }
+}
+// live watch status (only when this page is opened from the receiver, http://localhost:8000/runner)
+async function watchStatus() {
+  let txt, cls;
+  if (!location.protocol.startsWith("http")) {
+    txt = "Opened as a file: no watch check, and the timestamp file must be moved by hand. Better: open http://localhost:8000/runner"; cls = "muted";
+  } else {
+    try {
+      const s = await (await fetch("/status", { cache: "no-store" })).json();
+      txt = s.connected ? `● watch streaming, ${s.rate_hz} Hz` : "○ WATCH NOT STREAMING: press START on the watch";
+      cls = s.connected ? "ok" : "bad";
+    } catch (e) { txt = "○ receiver not answering"; cls = "bad"; }
+  }
+  for (const id of ["watch", "watch2"]) { $(id).textContent = txt; $(id).className = cls; }
+}
+setInterval(watchStatus, 1000); watchStatus();
+$("go").onclick = openSession;
+$("big").onclick = big;
+$("redo").onclick = () => {
+  if (i < 0 || i >= blocks.length) return;
+  log(i, blocks[i].key, "discard");
+  showWaiting("Thrown away. Get ready, clap 3×, then click to start it again.", "Clapped 3× → restart", blocks[i]);
+  $("big").onclick = () => { $("big").onclick = big; startActivity(); };
+};
+$("note").onclick = () => { const n = prompt("Note (saved with the timestamps):"); if (n) log(i, blocks[i]?.key || "", "note", n); };
+$("quit").onclick = () => { if (confirm("This ends the WHOLE session, not just this activity.\nTo redo only this activity, use 'Redo this one'.\n\nEnd the whole session? What you have so far is saved.")) { if (i >= 0 && i < blocks.length) log(i, blocks[i].key, "end"); finish(); } };
+$("dl").onclick = download;
+$("again").onclick = () => { $("done").style.display = "none"; $("setup").style.display = "block"; };
+document.addEventListener("keydown", e => {
+  if (e.code === "Space" && $("stage").style.display === "flex") { e.preventDefault(); $("big").click(); }
+});
+</script>
+</body>
+</html>

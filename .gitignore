@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+FocusWatch/local.properties
+FocusWatch/.gradle/
+FocusWatch/.kotlin/
+FocusWatch/build/
+FocusWatch/app/build/
+xcuserdata/
+Data Collection/sessions/WATCH_BACKUP/
