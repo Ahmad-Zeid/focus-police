@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+AGENTS.local.md
+
+# Synthetic data and anything derived from it is never submitted.
+data/synth/
+results/synth/
+models/synth/
