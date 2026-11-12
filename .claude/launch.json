@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "focus-police-synth",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["FP_MODEL=models/synth/focuspolice.joblib", "FP_DATA_DIR=data/synth", "uv", "run", "uvicorn", "focuspolice.server:app", "--host", "0.0.0.0", "--port", "8765"],
+      "port": 8765
+    },
+    {
+      "name": "focus-police",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "focuspolice.server:app", "--host", "0.0.0.0", "--port", "8765"],
+      "port": 8765
+    }
+  ]
+}
