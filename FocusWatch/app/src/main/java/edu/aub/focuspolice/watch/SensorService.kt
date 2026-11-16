@@ -12,6 +12,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioAttributes
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -22,7 +23,11 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.util.Log
 import androidx.core.app.ServiceCompat
+import org.json.JSONObject
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -61,6 +66,7 @@ class SensorService : Service(), SensorEventListener {
         const val MAX_QUEUE = HZ * 60 * 30
         const val BATCH = HZ * 30
         const val CHANNEL = "focus"
+        private const val LIVE_SAMPLE_AGE_S = 3.0
         val COLS = listOf(
             "time", "userAccelerationX", "userAccelerationY", "userAccelerationZ",
             "gravityX", "gravityY", "gravityZ", "rotationRateX", "rotationRateY", "rotationRateZ",
@@ -85,6 +91,7 @@ class SensorService : Service(), SensorEventListener {
     private var writer: BufferedWriter? = null
     private var linesSinceFlush = 0
     private var epochOffset = 0.0
+    private var lastNudgeId: String? = null
 
     @Volatile private var stopping = false
     private var uploader: Thread? = null
@@ -130,6 +137,7 @@ class SensorService : Service(), SensorEventListener {
             write(COLS.joinToString(",")); newLine()
         }
         epochOffset = System.currentTimeMillis() / 1000.0 - SystemClock.elapsedRealtimeNanos() / 1e9
+        lastNudgeId = null
         synchronized(queue) { queue.clear() }
 
         sm = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -248,11 +256,13 @@ class SensorService : Service(), SensorEventListener {
     }
 
     private fun post(batch: List<Row>): Boolean {
+        val session = Status.session
+        val live = Status.running && sampleAge(batch.first()) < LIVE_SAMPLE_AGE_S
         val body = StringBuilder(batch.size * 200 + 300)
-        body.append("{\"session\":\"").append(Status.session)
+        body.append("{\"session\":\"").append(session)
             .append("\",\"device\":\"").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
             .append("\",\"os\":\"Android ").append(Build.VERSION.RELEASE)
-            .append("\",\"hz\":").append(HZ).append(",\"cols\":[")
+            .append("\",\"hz\":").append(HZ).append(",\"live\":").append(live).append(",\"cols\":[")
         COLS.forEachIndexed { i, c -> if (i > 0) body.append(','); body.append('"').append(c).append('"') }
         body.append("],\"rows\":[")
         batch.forEachIndexed { i, r ->
@@ -274,9 +284,15 @@ class SensorService : Service(), SensorEventListener {
                 conn.setFixedLengthStreamingMode(bytes.size)
                 conn.outputStream.use { it.write(bytes) }
                 val code = conn.responseCode
-                conn.inputStream.use { it.readBytes() }
+                val reply = conn.inputStream.bufferedReader().use { it.readText() }
                 conn.disconnect()
-                if (code == 200) { Status.network = if (net != null) "Wi-Fi" else "default"; return true }
+                if (code == 200) {
+                    Status.network = if (net != null) "Wi-Fi" else "default"
+                    if (live && Status.running && Status.session == session && sampleAge(batch.last()) < LIVE_SAMPLE_AGE_S) {
+                        handleNudge(reply)
+                    }
+                    return true
+                }
                 Status.message = "Laptop answered HTTP $code"
             } catch (e: Exception) {
                 Status.message = "No laptop at ${server(this)} (${e.javaClass.simpleName})"
@@ -284,6 +300,26 @@ class SensorService : Service(), SensorEventListener {
             if (net == null) break
         }
         return false
+    }
+
+    private fun sampleAge(row: Row): Double = epochOffset + SystemClock.elapsedRealtimeNanos() / 1e9 - row.v[0]
+
+    @Suppress("DEPRECATION") // The AudioAttributes overload also supports Wear OS 3 (API 30).
+    private fun handleNudge(reply: String) {
+        // A missed or unsupported haptic must not make the uploader retry saved samples.
+        try {
+            val id = JSONObject(reply).optString("nudge_id")
+            if (id.isEmpty() || id == lastNudgeId) return
+            lastNudgeId = id
+            val vibrator = getSystemService(Vibrator::class.java) ?: return
+            if (vibrator.hasVibrator()) {
+                val effect = VibrationEffect.createOneShot(350, VibrationEffect.DEFAULT_AMPLITUDE)
+                val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build()
+                vibrator.vibrate(effect, attributes)
+            }
+        } catch (e: Exception) {
+            Log.w("FocusPolice", "Could not play watch reminder", e)
+        }
     }
 
     // ---------------------------------------------------------------- stop

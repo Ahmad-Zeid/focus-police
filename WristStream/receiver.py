@@ -40,6 +40,8 @@ COLS = ["time", "userAccelerationX", "userAccelerationY", "userAccelerationZ",
 state = {"last_seen": 0.0, "session": None, "device": None, "total": 0, "files": {}, "cols": COLS}
 recent = deque(maxlen=50 * 15)          # last 15 s of rows: the live graphs and the classifier window
 NUDGE_S = 10                            # off-task for this long in a row -> the page shows the nudge
+WATCH_NUDGE_S = 60
+STREAM_GAP_S = 3
 pred = {"model": None, "test_accuracy": None, "label": None, "probs": {}, "on_task": None,
         "off_since": None, "error": None, "t": None}
 history = deque(maxlen=2 * 120)         # (time, label, confidence, on_task), 2 per second for 2 min
@@ -47,6 +49,10 @@ PLOT = ["userAccelerationX", "userAccelerationY", "userAccelerationZ",
         "rotationRateX", "rotationRateY", "rotationRateZ", "gravityX", "gravityY", "gravityZ"]
 arrivals = deque(maxlen=60)             # (wall time, n rows) per request, for the rate
 lock = threading.Lock()
+
+
+def clear_prediction():
+    pred.update(label=None, probs={}, on_task=None, off_since=None, t=None)
 
 
 def classifier_loop():
@@ -62,30 +68,33 @@ def classifier_loop():
                 live_model = importlib.reload(live_model)
                 model, stamp = live_model.load(), now_stamp
                 print(f"\n[model] {model.name}")
-                pred.update(model=model.name, test_accuracy=model.test_accuracy,
-                            accuracy_kind=getattr(model, "accuracy_kind", ""), error=None)
+                with lock:
+                    clear_prediction()
+                    pred.update(model=model.name, test_accuracy=model.test_accuracy,
+                                accuracy_kind=getattr(model, "accuracy_kind", ""), error=None)
             with lock:
-                fresh = state["last_seen"] and time.time() - state["last_seen"] < 3
+                fresh = time.time() - state["last_seen"] < STREAM_GAP_S
                 cols = state["cols"]
                 n = int(model.window_s * 50)
-                rows = list(recent)[-n:] if fresh and len(recent) >= n else None
-            if rows is None:
-                pred.update(label=None, probs={}, on_task=None, off_since=None)
-                continue
-            a = np.array(rows, dtype=float)
-            win = {c: a[:, i] for i, c in enumerate(cols) if i < a.shape[1]}
-            t = rows[-1][0]
-            if t == pred["t"]:                      # no new samples since the last prediction
-                continue
-            label, probs = model.predict(win)
-            on = live_model.is_on_task(label)
-            off_since = pred["off_since"] if on is False else None
-            if on is False and off_since is None:
-                off_since = t
-            pred.update(label=label, probs=probs, on_task=on, off_since=off_since, t=t, error=None)
-            history.append((t, label, round(probs.get(label, 0), 3), on))
+                if not fresh or len(recent) < n:
+                    clear_prediction()
+                    continue
+                t = recent[-1][0]
+                if t == pred["t"]:                  # no new samples since the last prediction
+                    continue
+                a = np.array(list(recent)[-n:], dtype=float)
+                win = {c: a[:, i] for i, c in enumerate(cols) if i < a.shape[1]}
+                label, probs = model.predict(win)
+                on = live_model.is_on_task(label)
+                off_since = pred["off_since"] if on is False else None
+                if on is False and off_since is None:
+                    off_since = t
+                pred.update(label=label, probs=probs, on_task=on, off_since=off_since, t=t, error=None)
+                history.append((t, label, round(probs.get(label, 0), 3), on))
         except Exception as e:                      # a broken model must never stop the recording
-            pred.update(error=f"{type(e).__name__}: {e}", label=None)
+            with lock:
+                clear_prediction()
+                pred["error"] = f"{type(e).__name__}: {e}"
             stamp = now_stamp
 
 
@@ -183,20 +192,32 @@ class H(BaseHTTPRequestHandler):
             session = body.get("session", "unknown")
         except Exception as e:
             self.send_error(400, str(e)); return
+        reply = {"ok": True}
         with lock:
             write_rows(session, rows, body.get("cols"),
                        {k: body.get(k) for k in ("device", "os", "hz") if k in body})
-            if session != state["session"]:
+            now = time.time()
+            live = body.get("live", True) is True
+            if (session != state["session"] or not live or now - state["last_seen"] >= STREAM_GAP_S
+                    or (rows and recent and rows[0][0] - recent[-1][0] >= STREAM_GAP_S)):
                 recent.clear()
-            state.update(last_seen=time.time(), session=session, device=body.get("device"),
+                clear_prediction()
+            state.update(last_seen=now, session=session, device=body.get("device"),
                          cols=body.get("cols") or COLS)
             state["total"] += len(rows)
-            recent.extend(rows)
-            arrivals.append((time.time(), len(rows)))
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"ok":true}')
+            if live:
+                if recent:
+                    last_t = recent[-1][0]
+                    recent.extend(row for row in rows if row[0] > last_t)
+                else:
+                    recent.extend(rows)
+            arrivals.append((now, len(rows)))
+            off_since = pred["off_since"]
+            if (body.get("live") is True and off_since is not None
+                    and pred["t"] - off_since >= WATCH_NUDGE_S):
+                # Keep this ID stable if the watch has to retry a request.
+                reply["nudge_id"] = f"{session}:{off_since}"
+        self.send_json(reply)
 
     def send_json(self, obj):
         data = json.dumps(obj).encode()
@@ -215,11 +236,12 @@ class H(BaseHTTPRequestHandler):
                 out = [[r[0]] + [r[i] for i in idx] for r in recent if r[0] > since]
             self.send_json({"cols": ["time"] + [c for c in PLOT if c in cols], "rows": out}); return
         if url.path == "/predict":
-            p = dict(pred)
+            with lock:
+                p = dict(pred)
+                p["history"] = list(history)
             p["off_for"] = round(p["t"] - p["off_since"], 1) if p.get("off_since") and p.get("t") else 0
             p["nudge"] = p["off_for"] >= NUDGE_S
             p["nudge_after"] = NUDGE_S
-            p["history"] = list(history)
             self.send_json(p); return
         if url.path == "/status":
             with lock:
