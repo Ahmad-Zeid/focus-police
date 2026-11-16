@@ -4,6 +4,7 @@ A Wear OS app for the borrowed **Galaxy Watch5 Pro**. It records wrist motion at
 
 - **Recording training data:** Start, do the session with the runner, Stop. The laptop receiver saves it as `Data Collection/sessions/LIVE_<time>/stream.csv`.
 - **The live demo / focus session:** the same Start button. The laptop does the live classification: `receiver.py` runs `../WristStream/live_model.py` and shows live graphs plus the prediction at http://localhost:8000 (see `../WristStream/README.md`, *The live page*). The watch doesn't need to know which of the two it's doing.
+- **Wrist reminder:** with the updated receiver, the watch buzzes once after 60 continuous seconds of detected phone use. Returning to work or losing the live stream resets the timer. Data uploaded after a connection gap is still saved for labeling.
 
 ```
 Galaxy Watch (Focus Police) --Wi-Fi, HTTP POST every 1 s--> laptop receiver.py --> sessions/LIVE_<time>/stream.csv
@@ -28,6 +29,8 @@ Galaxy Watch (Focus Police) --Wi-Fi, HTTP POST every 1 s--> laptop receiver.py -
 Note: Android's gravity vector points **up** and Apple's points **down**. That only matters when mixing Apple and Galaxy data. Training on Galaxy data only, as planned, avoids it.
 
 ## Tomorrow: see `WATCH-SETUP.md` next to this file.
+
+When updating an existing installation, Android requires the same signing key. If `adb install -r` reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, either build with the original signing key or copy any recordings off the watch with `pull-backup.sh` before uninstalling the old app and installing the new APK. Uninstalling also clears the saved laptop address.
 
 ## Server mode (only if the laptop route fails, e.g. on AUB Wi-Fi)
 
