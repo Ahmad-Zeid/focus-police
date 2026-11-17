@@ -49,6 +49,7 @@ PLOT = ["userAccelerationX", "userAccelerationY", "userAccelerationZ",
         "rotationRateX", "rotationRateY", "rotationRateZ", "gravityX", "gravityY", "gravityZ"]
 arrivals = deque(maxlen=60)             # (wall time, n rows) per request, for the rate
 lock = threading.Lock()
+runner_lock = threading.Lock()
 
 
 def clear_prediction():
@@ -147,20 +148,28 @@ class H(BaseHTTPRequestHandler):
         watch recording it belongs to (the session streaming now, or the last one) and label it."""
         n = int(self.headers.get("Content-Length", 0))
         text = self.rfile.read(n).decode("utf-8", "replace")
-        name = re.sub(r"[^A-Za-z0-9_.-]", "_", parse_qs(url.query).get("name", ["runner.csv"])[0])
+        params = parse_qs(url.query)
+        name = re.sub(r"[^A-Za-z0-9_.-]", "_", params.get("name", ["runner.csv"])[0])
         if "runner" not in name:
             name = name.replace(".csv", "") + "_runner.csv"
+        pinned = params.get("recording", [None])[0]
         with lock:
-            session = state["session"]
-        if not session:
-            self.send_json({"saved": False, "error": "no watch recording has arrived since the receiver started"}); return
-        folder = os.path.join(OUT, f"LIVE_{session}")
-        os.makedirs(folder, exist_ok=True)
+            session = pinned or state["session"]
+            path = state["files"].get(session)
+        if not path:
+            self.send_json({"saved": False, "error": "The receiver could not find this watch recording."}); return
+        folder = os.path.dirname(path)
         merged = False
         for old in sorted(os.listdir(folder)):              # a second runner file for the same recording:
             if old.endswith("_runner.csv"):                 # keep both sets of blocks, and the original file
-                with open(os.path.join(folder, old)) as f:
-                    text = merge_runner(f.read(), text)
+                with open(os.path.join(folder, old), newline="") as f:
+                    previous = f.read()
+                if pinned or "watch_epoch_ms" in previous.partition("\n")[0]:
+                    if old == name and previous == text:
+                        continue  # retry of the same save
+                    self.send_json({"saved": False, "error": "This watch recording already has labels. Start a new recording for each session."})
+                    return
+                text = merge_runner(previous, text)
                 k = sum(x.startswith(old + ".part") for x in os.listdir(folder)) + 1
                 os.replace(os.path.join(folder, old), os.path.join(folder, f"{old}.part{k}"))
                 merged = True
@@ -168,12 +177,16 @@ class H(BaseHTTPRequestHandler):
             f.write(text)
         out = {"saved": True, "folder": f"LIVE_{session}", "ok": False, "output": "", "merged": merged}
         if os.path.exists(SEGMENT):
-            time.sleep(3)                                   # let the watch deliver the final claps
+            time.sleep(3)                                   # let the watch deliver its last samples
             try:
                 p = subprocess.run([sys.executable, SEGMENT, folder], capture_output=True, text=True, timeout=180)
                 out["ok"] = p.returncode == 0
                 out["output"] = (p.stdout + p.stderr).strip()[-4000:]
+                if out["ok"] and pinned:
+                    with open(os.path.join(folder, "segments.csv"), newline="") as segments:
+                        out["blocks"] = sum(1 for _ in csv.DictReader(segments))
             except Exception as e:
+                out["ok"] = False
                 out["output"] = f"segment.py did not finish: {e}"
         else:
             out["output"] = "segment.py not found next to the receiver; label it later."
@@ -182,7 +195,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if urlparse(self.path).path == "/runner-log":
-            self.runner_log(urlparse(self.path)); return
+            with runner_lock:
+                self.runner_log(urlparse(self.path))
+            return
         if self.path != "/ingest":
             self.send_error(404); return
         n = int(self.headers.get("Content-Length", 0))
@@ -248,6 +263,7 @@ class H(BaseHTTPRequestHandler):
                 now = time.time()
                 win = [n for t, n in arrivals if now - t <= 5]
                 last = recent[-1] if recent else None
+                path = state["files"].get(state["session"])
                 mag = None
                 if recent:
                     tail = list(recent)[-50:]
@@ -255,7 +271,13 @@ class H(BaseHTTPRequestHandler):
                 s = {"connected": now - state["last_seen"] < 3, "seconds_since": round(now - state["last_seen"], 1) if state["last_seen"] else None,
                      "session": state["session"], "device": state["device"], "total": state["total"],
                      "rate_hz": round(sum(win) / 5, 1), "motion_g": round(mag, 3) if mag is not None else None,
-                     "delay_s": round(now - last[0], 2) if last else None}
+                     "delay_s": round(now - last[0], 2) if last else None,
+                     # Anchor clicks to the watch's own clock. Advance the last live sample
+                     # by the time since it arrived, without comparing the two system clocks.
+                     "watch_epoch_s": last[0] + (now - state["last_seen"])
+                     if last and now - state["last_seen"] < STREAM_GAP_S else None,
+                     "recording_labelled": bool(path and any(
+                         name.endswith("_runner.csv") for name in os.listdir(os.path.dirname(path))))}
             data = json.dumps(s).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
             self.wfile.write(data); return

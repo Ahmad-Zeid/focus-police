@@ -10,11 +10,9 @@ The session folder holds the watch export (unzipped) and the runner file
 How the labels are made:
   1. Your clicks in session-runner.html give each activity's start and end.
      Takes you redid ("Redo this one") are dropped.
-  2. The triple claps (3+ sharp peaks within 1.5 s) happen just before each click.
-     Each activity ends 1 s before the clap that closes it, so the claps never get a label.
-  3. The claps also check the two clocks: if clap-to-click gaps look impossible,
-     the laptop times are shifted to fit.
-  4. 3 s are trimmed from the start of every activity (settling in).
+  2. New runner logs carry timestamps in the watch clock. Trim three seconds
+     from each end to leave out movement around the transitions.
+  3. For older logs, align clicks to the recorded triple claps.
 
 Output, written to the session folder:
   labelled.csv   one row per sample: t, epoch_s, acc x/y/z (g), gyro x/y/z and grav x/y/z if present,
@@ -229,13 +227,24 @@ def main():
     if runner is None:
         sys.exit("No *_runner.csv in the folder. Put the file from session-runner.html next to the export.")
 
+    watch_timed = "watch_epoch_ms" in runner
+    if watch_timed:
+        marks = runner.event.isin(["start", "end", "discard"])
+        times = pd.to_numeric(runner.loc[marks, "watch_epoch_ms"], errors="coerce")
+        if "epoch_s" not in data or not np.isfinite(times).all():
+            sys.exit("Watch-timed labels require valid watch timestamps in the recording and the activity log.")
+        runner.loc[marks, "epoch_s"] = times / 1000.0
     segs, boundaries = runner_segments(runner)
     session = str(runner["session"].iloc[0])
     n_discard = int((runner.event == "discard").sum())
     print(f"runner file : {len(segs)} activities kept, {n_discard} redone, order {[s[1] for s in segs]}")
 
-    bursts, peak_times = find_bursts(t, dyn, fs, args.threshold)
-    print(f"clap bursts : {len(bursts)} found for {len(boundaries)} switches  (peaks over {args.threshold} g: {len(peak_times)})")
+    bursts = []
+    if watch_timed:
+        print("timing: activity markers use the watch clock")
+    else:
+        bursts, peak_times = find_bursts(t, dyn, fs, args.threshold)
+        print(f"clap bursts : {len(bursts)} found for {len(boundaries)} switches  (peaks over {args.threshold} g: {len(peak_times)})")
 
     # laptop clock -> watch time axis
     if "epoch_s" in data:
@@ -284,7 +293,7 @@ def main():
     if gaps:
         print(f"clap → click: median {float(np.median(gaps)):.1f} s over {len(gaps)}/{len(boundaries)} switches")
     missing = sum(m is None for m in matched)
-    if missing:
+    if missing and not watch_timed:
         print(f"  {missing} switch(es) without a clap: those ends are trimmed by a fixed 6 s instead")
     burst_before = {b: m for b, m in zip(boundaries, matched)}
 
@@ -295,14 +304,25 @@ def main():
         s = s_ep - w0 + offset + TRIM_S
         m = burst_before.get(e_ep)
         e = (m[0] - 1.0) if m else (e_ep - w0 + offset - 6.0)
+        end_from = "clap" if m else "click-6s"
+        if watch_timed:
+            e = e_ep - w0 - TRIM_S
+            end_from = "watch clock"
         if e - s < 5:
             print(f"  skipped {a}: under 5 s left after trimming")
             continue
         sel = (t >= s) & (t < e)
+        if watch_timed:
+            covered = np.sort(t[sel])
+            if len(covered) < 2 or np.diff(np.r_[s, covered, e]).max() > 1.0:
+                print(f"  skipped {a}: more than one second of watch data was missing")
+                continue
         data.loc[sel, "label"] = a
         data.loc[sel, "block"] = idx                # which runner block (an activity repeats once per round)
         rows.append({"index": idx, "activity": a, "start_s": round(s, 2), "end_s": round(e, 2),
-                     "duration_s": round(e - s, 1), "end_from": "clap" if m else "click-6s"})
+                     "duration_s": round(e - s, 1), "end_from": end_from})
+    if watch_timed and not rows:
+        sys.exit("No complete activities could be labelled. The raw recording and activity log were kept.")
     seg_df = pd.DataFrame(rows)
     data["session"] = session
     data["watch_wrist"] = runner["watch_wrist"].iloc[0] if "watch_wrist" in runner else ""
@@ -314,7 +334,8 @@ def main():
 
     fig, ax = plt.subplots(figsize=(16, 4.5))
     ax.plot(t, dyn, lw=0.4, color="#333")
-    ax.axhline(args.threshold, color="#a5521b", ls="--", lw=0.8)
+    if not watch_timed:
+        ax.axhline(args.threshold, color="#a5521b", ls="--", lw=0.8)
     cmap = plt.get_cmap("tab10")
     for k, r in seg_df.iterrows():
         ax.axvspan(r.start_s, r.end_s, color=cmap(k % 10), alpha=0.2)
@@ -325,7 +346,8 @@ def main():
         ax.axvline(b - w0 + offset, color="#1f4e9c", lw=0.8, ls=":")
     ax.set_xlabel("time (s)")
     ax.set_ylabel("dynamic acceleration (g)")
-    ax.set_title(f"{session}: shaded = labelled, orange = clap bursts, blue dotted = your clicks")
+    key = "shaded = labelled, blue dotted = activity markers" if watch_timed else "shaded = labelled, orange = clap bursts, blue dotted = your clicks"
+    ax.set_title(f"{session}: {key}")
     fig.tight_layout()
     fig.savefig(os.path.join(folder, "check.png"), dpi=110)
     print(f"wrote labelled.csv, segments.csv, check.png in {folder}")
