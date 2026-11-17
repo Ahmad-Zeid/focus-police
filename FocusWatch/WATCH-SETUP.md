@@ -55,10 +55,10 @@ Not testable without the real watch: pairing over wireless debugging, real Wi-Fi
 ## 3. Each recording session
 
 1. Receiver running (setup leaves it running; to start it by hand: `python3 ../WristStream/receiver.py`). Live page with graphs and the (placeholder) prediction: http://localhost:8000
-2. Open **http://localhost:8000/runner** on the second screen and fill in the session details. It shows whether the watch is streaming. (Updated 12 Nov evening: the receiver serves the runner now.)
+2. Open **http://localhost:8000/runner** on the laptop and fill in the session details.
 3. On the watch: open **Focus Police** → **START**. The screen should say *laptop connected*. You can let the screen go dark; it keeps recording.
-4. Run the session (clap 3×, click, and so on). At the end: **STOP** on the watch.
-5. Nothing to move: when you click *finish*, the runner hands its timestamps to the receiver, which files them in the session's `sessions/LIVE_<time>/` folder, runs `segment.py`, and shows the result and `check.png` on the page.
+4. Click **Start session** on the laptop. For each activity, get ready, click **Start activity**, and follow the timer. Click **Next activity** when it ends.
+5. Click **Save session**. The runner shows how many activities were labelled and saves them alongside the recording in `sessions/LIVE_<time>/`. Once it finishes, tap **STOP** on the watch.
 6. **New network?** The watch keeps the old laptop address. Open Focus Police on the watch, tap the address, and type the laptop's current one (`ipconfig getifaddr en0` on the laptop prints it; the app adds `http://` and `:8000`).
 
 Plan (12 Nov evening): PILOT → S1 → S2 → TEST → S3 → NATURAL → OTHERHAND. The design and reasons are in `../Data Collection/README.md`, section 0.

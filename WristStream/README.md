@@ -90,6 +90,6 @@ python3 replay.py "../Data Collection/sessions/LIVE_20261112-081101/stream.csv" 
 ```
 Tested 12 Nov this way: graphs, placeholder predictions, hot-loading a dummy `model.pkl` (name and accuracy shown, nudge fired after 10 s off task), falling back to the placeholder when it was removed, and phone width (the prediction moves to the top).
 
-## The session runner is served here too (12 Nov evening)
+## Recording and labelling a session
 
-`http://localhost:8000/runner` serves `../Data Collection/session-runner.html`. Opened this way it shows whether the watch is streaming and warns before a session starts without it. At *finish* it posts its timestamps to `/runner-log`; the receiver saves them into the folder of the recording in progress (`sessions/LIVE_<session>/`), waits 3 s for the last claps to arrive, runs `segment.py`, and returns its output and `check.png` to the page. An earlier runner file in that folder is kept as `*.replaced`. Tested with a replayed session on a test receiver.
+`http://localhost:8000/runner` guides the participant through timed activities once the watch is streaming. The runner uses the watch clock for the activity markers. **Save session** sends the activity log to `/runner-log` with the watch recording ID. The receiver saves the log alongside that recording, runs `segment.py`, and shows the label count and `check.png`. See the [recording guide](../Data%20Collection/README.md) for the current procedure.

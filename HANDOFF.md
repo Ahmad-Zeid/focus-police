@@ -196,6 +196,8 @@ python3 receiver.py 8010 /some/folder            # another port, another output 
 
 ## 7. Recording and labelling
 
+**Updated recording instructions:** Use the [current recording guide](Data%20Collection/README.md) for new sessions. The notes below describe the original clap-based workflow used for the first recordings.
+
 ### The method
 
 One continuous watch recording per session. The runner page shows the current activity and a countdown, turns the whole screen red when the time is up, and logs a timestamp each time the person clicks to move on. Before every click the person **claps three times**. Two reasons:
