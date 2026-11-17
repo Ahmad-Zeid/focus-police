@@ -4,21 +4,29 @@ Built 11–12 Nov 2026 for the final project (due **Tue 17 Nov 23:55**). Use it 
 
 | File | What it does |
 |---|---|
-| `session-runner.html` | Keep it open on the second screen. It shows the current activity and a countdown, turns **red** when the time is up, and logs a timestamp every time you click to switch. No sound. |
-| `segment.py` | Cuts a watch recording into labelled activity segments from your clicks and the claps, and draws `check.png` so you can see whether it worked. |
+| `session-runner.html` | Guides you through one activity at a time, times each activity, and saves the labels with the watch recording. |
+| `segment.py` | Uses watch timestamps to label the recordings and draws `check.png` for review. Older recordings can still use their clap markers. |
 | `sessions/` | One folder per session, e.g. `sessions/S1_P1/`. |
 
 ---
 
-## 0. CURRENT PLAN (12 Nov evening): record for model comparison
+## 0. Current recording guide
 
-Open the runner from the receiver, **http://localhost:8000/runner**, not as a file. That way it shows whether the watch is streaming, and at *finish* the session is filed and labelled by itself (no moving files, no command).
+Open **http://localhost:8000/runner** (use the receiver's port if different). Choose a session and participant ID, tap **START** on the watch, then click **Start session**. The runner shows one activity at a time.
 
-**Session format (S1…S6 and TEST):** every activity once per round, 2 rounds, 60 s per block, shuffled differently each round: 20 blocks, about 24 min. Several short blocks beat one long block, because each block is a fresh start with the hand placed a little differently, which is the variation the model has to cope with. There are now 10 activities: the original nine plus **other small movements** (stretching, scratching, reaching), so the model has somewhere to put motion that is neither work nor phone.
+1. Get ready, then click **Start activity**. Do the activity until the timer ends. No clapping.
+2. Click **Next activity** and repeat. If the previous attempt went wrong, use **Redo activity** before moving on.
+3. Click **Save session**, wait for the label count, then tap **STOP** on the watch. To stop early, **End session** saves completed activities. Start a fresh watch recording for each new session.
+
+**Training and TEST defaults:** two shuffled rounds of eight activities at 60 seconds each (16 minutes plus setup and transitions). The set follows the proposal: laptop typing, handwriting, quiet reading, drinking, holding a cup or bottle, phone scrolling, phone texting, and a phone call. A physical calculator is optional under **Recording options**. Use the same activity set for comparable training and test sessions.
+
+**Wrist placement:** use the same watch wrist throughout the main training and test recordings, and record both the actual watch wrist and writing hand in the runner. Write naturally with your usual hand. If the watch is on the other wrist, handwriting may look like quiet reading. Keep both labels to measure that confusion, and count both as on task when scoring reminders. Hold the phone in the watch hand for the main comparison. Keep any recordings made with a different wrist placement or phone hand separate so we can see how that change affects the result.
+
+The runner aligns each activity start to the live watch stream. The timer supplies the end. Labelling trims three seconds from both ends to leave out transitions and rejects blocks with more than a second of missing data. Expand **Review saved labels** to see the matching plot and any skipped blocks. Each recording, timestamp log, and label file is saved together under `sessions/LIVE_<time>/`.
 
 | Session | Role | What it is |
 |---|---|---|
-| PILOT | setup check | 2 blocks × 20 s. Do it first every evening |
+| PILOT | setup check | 20 s of laptop typing and 20 s of phone texting |
 | S1, S2, S3 (up to S6) | **training** | The format above. Between sessions: STOP, take the watch off and on, START, and change something small (seat, cup, where the phone lies). Fill in "What's different this session" |
 | TEST | **final score only** | Same format. Never used to choose anything. Record it like a normal session, not more carefully |
 | NATURAL | extra test | No script: real work 3 min, real phone use 1.5 min, three times. Closest to the demo |
@@ -28,7 +36,7 @@ Open the runner from the receiver, **http://localhost:8000/runner**, not as a fi
 
 **Then:** `../Model/train.py` compares window lengths × sensor sets × feature sets × models, picks one without looking at TEST, scores it once on TEST, and writes `../Model/REPORT.md`. See `../Model/README.md`.
 
-The older sections below describe the same clap-and-click method; where they say to move the timestamp file by hand or name S3 as the test session, this section replaces them.
+The sections below document the earlier clap-based and offline workflows.
 
 ## 0b. 12 Nov morning: record on the borrowed Galaxy Watch5 Pro
 
