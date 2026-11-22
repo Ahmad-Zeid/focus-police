@@ -179,8 +179,9 @@ def onoff(labels):
     return np.array([-1 if l is None else (0 if F.is_on_task(l) is False else 1) for l in labels])
 
 
-def table(sess, config):
-    """Every window of one continuous session: features, activity label (or None), on/off, block, end time."""
+def table(sess, config, groups=False):
+    """Every window of one continuous session: features, label the model learns (the activity's group, see
+    features.GROUPS, or the activity itself with groups=False), the recorded activity, on/off, block, time."""
     df = sess["df"]
     t = df.t.to_numpy(float)
     cols = sorted(set(F.V2_COLUMNS) | set(F.SENSORS[config["sensors"]]))
@@ -202,8 +203,9 @@ def table(sess, config):
             labels.append(lab[e - n + 1 + int(np.argmax(b == vals[k]))]); blocks.append(int(vals[k]))
         else:
             labels.append(None); blocks.append(-1)
-    labels = np.array(labels, dtype=object)
-    return {"X": np.nan_to_num(np.array(X, float)), "label": labels, "truth": onoff(labels),
+    activity = np.array(labels, dtype=object)
+    labels = np.array([F.group(l) if groups and l is not None else l for l in labels], dtype=object)
+    return {"X": np.nan_to_num(np.array(X, float)), "label": labels, "activity": activity, "truth": onoff(labels),
             "block": np.array(blocks), "t": t[ends]}
 
 
@@ -324,17 +326,19 @@ def rank(res):
 
 # ------------------------------------------------------------------ figures and tables
 
-def plot_confusion(y, p, labels, path, title):
-    cm = confusion_matrix(y, p, labels=labels)
+def plot_confusion(y, p, labels, path, title, cols=None):
+    """Rows: actual (labels); columns: predicted (cols, default the same labels)."""
+    cols = labels if cols is None else cols
+    cm = pd.crosstab(pd.Categorical(y, labels), pd.Categorical(p, cols), dropna=False).to_numpy()
     pct = cm / np.maximum(cm.sum(1, keepdims=True), 1)
-    fig, ax = plt.subplots(figsize=(1.0 + 0.75 * len(labels), 0.8 + 0.7 * len(labels)))
-    ax.imshow(pct, cmap="Greys", vmin=0, vmax=1)
+    fig, ax = plt.subplots(figsize=(2.2 + 0.75 * len(cols), 0.8 + 0.6 * len(labels)))
+    ax.imshow(pct, cmap="Greys", vmin=0, vmax=1, aspect="auto")
     for i in range(len(labels)):
-        for j in range(len(labels)):
+        for j in range(len(cols)):
             if cm[i, j]:
                 ax.text(j, i, f"{pct[i, j] * 100:.0f}", ha="center", va="center", fontsize=9,
                         color="white" if pct[i, j] > 0.5 else "black")
-    ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_xticks(range(len(cols))); ax.set_xticklabels(cols, rotation=45, ha="right")
     ax.set_yticks(range(len(labels))); ax.set_yticklabels(labels)
     ax.set_xlabel("predicted"); ax.set_ylabel("actual"); ax.set_title(title, fontsize=10)
     plt.tight_layout(); plt.savefig(path, dpi=120); plt.close()
@@ -400,7 +404,7 @@ LOOKALIKES = ["drinking", "hold_cup", "calculator", "other_desk", "phone_call", 
 def flagged_by_activity(ps, tables, k=1):
     """Share of each activity's windows flagged as phone (after the live smoothing)."""
     flag = np.concatenate([smooth_mean(p, k) >= 0.5 for p in ps])
-    lab = np.concatenate([tb["label"] for tb in tables])
+    lab = np.concatenate([tb["activity"] for tb in tables])
     return {a: float(flag[lab == a].mean()) for a in LOOKALIKES if (lab == a).any()}
 
 
@@ -418,6 +422,9 @@ def main():
     ap.add_argument("--no-deploy", action="store_true")
     ap.add_argument("--deploy-to", default=DEPLOY, help="where to save the live model (testing)")
     ap.add_argument("--jobs", type=int, default=-1)
+    ap.add_argument("--train-on-groups", action="store_true",
+                    help="learn the classes in features.GROUPS directly instead of every recorded activity "
+                         "(tried and dropped on 22 Nov; kept to reproduce the comparison)")
     args = ap.parse_args()
     t_start = time.time()
     notes = []
@@ -453,7 +460,7 @@ def main():
     if len(participants) < 3:
         notes.append(f"Training covers {len(participants)} participant(s) ({', '.join(participants)}). "
                      "Accuracy on a new person is the open question; record more people to measure it.")
-    classes = sorted({l for s in train for l in s["df"].label.unique() if l != "none"})
+    classes = sorted({F.group(l) for s in train for l in s["df"].label.unique() if l != "none"})
 
     windows_ = [4.0] if args.quick else WINDOWS
     models_ = ["Extra trees"] if args.quick else CANDIDATE_MODELS
@@ -469,7 +476,8 @@ def main():
         uniq.setdefault(json.dumps(cfg, sort_keys=True), cfg)
     print(f"\ncomputing features: {len(uniq)} feature settings x {len(everything)} sessions ...")
     jobs = [(ck, i) for ck in uniq for i in range(len(everything))]
-    done = Parallel(n_jobs=args.jobs)(delayed(table)(everything[i], uniq[ck]) for ck, i in jobs)
+    groups = args.train_on_groups
+    done = Parallel(n_jobs=args.jobs)(delayed(table)(everything[i], uniq[ck], groups) for ck, i in jobs)
     TB = {(ck, i): tb for (ck, i), tb in zip(jobs, done)}
 
     def tabs(cfg, group):
@@ -525,10 +533,12 @@ def main():
             p, P = p_off(final, tb["X"])
             ts.append((tb, p, P))
         y = np.concatenate([tb["label"] for tb, _, _ in ts])
+        ya = np.concatenate([tb["activity"] for tb, _, _ in ts])
         P = np.vstack([P for _, _, P in ts])
         lab = y != None  # noqa: E711
         pred = final.classes_[P.argmax(1)]
-        yl, pl = y[lab].astype(str), pred[lab]
+        al = ya[lab].astype(str)
+        yl = np.array([F.group(a) for a in al]); pl = np.array([F.group(x) for x in pred[lab]])   # reported classes
         test_acc, test_f1 = accuracy_score(yl, pl), f1_score(yl, pl, average="macro")
 
         def test_score(model, tables, k):
@@ -574,11 +584,14 @@ def main():
         head_row = ("| | Balanced on/off | Phone caught | False alarms | False nudges (10 s) | False watch buzzes "
                     "(2 min) | Phone activities nudged | Median nudge delay |\n|---|---|---|---|---|---|---|---|")
         labs = sorted(set(yl) | set(pl))
-        plot_confusion(yl, pl, labs, os.path.join(out, "confusion_test.png"), f"TEST, {best.model}: % of each actual activity")
-        per = pd.DataFrame({"activity": labs,
-                            "flagged as phone": [float((smooth_mean(np.concatenate([p for _, p, _ in ts]), smooth_n)[lab][yl == l] >= 0.5).mean()) if (yl == l).any() else np.nan for l in labs],
-                            "activity recall": [float((pl[yl == l] == l).mean()) if (yl == l).any() else np.nan for l in labs],
-                            "windows": [int((yl == l).sum()) for l in labs]})
+        acts = sorted(set(al))
+        plot_confusion(al, pl, acts, os.path.join(out, "confusion_test.png"),
+                       "TEST: % of each recorded activity per predicted class", cols=sorted(set(pl) | set(yl)))
+        flag = smooth_mean(np.concatenate([p for _, p, _ in ts]), smooth_n)[lab] >= 0.5
+        per = pd.DataFrame({"activity": acts, "reported class": [F.group(l) for l in acts],
+                            "flagged as phone": [float(flag[al == l].mean()) for l in acts],
+                            "recognised as its class": [float((pl[al == l] == F.group(l)).mean()) for l in acts],
+                            "windows": [int((al == l).sum()) for l in acts]})
         tb0, p0, _ = ts[0]
         ps0 = smooth_mean(p0, smooth_n)
         plot_timeline(tb0["t"], tb0["truth"], ps0, 0.5, nudges(ps0 >= 0.5, tb0["t"]), os.path.join(out, "timeline_test.png"),
@@ -594,8 +607,11 @@ def main():
             row(n, s_) for n, s_ in rule_rows] + ["",
             "The threshold rows are the proposal's baseline: one number per window and one cut-off, fitted on the "
             "training sessions (`Model/baseline.py`).", "", "![baselines](baselines.png)", "",
-            f"Activity names (not needed for the nudge): accuracy {test_acc:.1%}, macro-F1 {test_f1:.3f} over "
-            f"{len(labs)} activities.", "",
+            f"Classes ({', '.join(labs)}): accuracy {test_acc:.1%}, macro-F1 {test_f1:.3f}. "
+            + "The model is trained on every recorded activity; typing, writing, reading and the calculator are "
+            "reported as one class, desk work, and the phone activities as phone, because one wrist cannot tell "
+            "them apart and they need the same response (features.GROUPS). The per-activity table below scores "
+            "each recorded activity against its class.", "",
             "**What each part adds** (same model and window, retrained without the part, scored on TEST):", "",
             head_row] + [row(a, s) for a, s in abl_rows] + [
             "", "![timeline](timeline_test.png)", "", "![confusion](confusion_test.png)", "",
@@ -681,7 +697,7 @@ def main():
 
     if not args.no_deploy:
         name = (f"{best.model}, {best.features}, {cfg['window_s']:g} s, {len(train)} training session(s), "
-                f"{len(classes)} activities (trained {time.strftime('%d %b %H:%M')})")
+                f"{len(classes)} classes (trained {time.strftime('%d %b %H:%M')})")
         blob = {"model": final, "config": cfg, "smooth_n": int(smooth_n), "name": name,
                 "test_accuracy": float(R["test_bin"]) if R else None,
                 "test_accuracy_kind": "balanced on/off task, TEST session",
