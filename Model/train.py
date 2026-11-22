@@ -69,6 +69,8 @@ TRAIN_EVERY = 2      # training uses every 2nd window (1 s apart): half-overlapp
 LABEL_SHARE = 0.9    # a window belongs to an activity when 90% of its samples do
 STREAM_GAP_S = 3.0   # the receiver forgets its history after a gap this long; so do we
 NUDGE_S = 10         # same as NUDGE_S in WristStream/receiver.py
+WATCH_NUDGE_S = 120  # same as WATCH_NUDGE_S in WristStream/receiver.py: the watch buzz
+NEAR_PHONE_S = 15    # a nudge is correct when labelled phone use lies within this many seconds of it
 SMOOTH = [1, 5, 9]   # average the last k predictions (k x 0.5 s)
 
 MODELS = {
@@ -229,14 +231,22 @@ def nudges(off, t, nudge_s=NUDGE_S):
     return np.array(fired, dtype=int)
 
 
+def false_count(fired, truth, t):
+    """Nudges with no labelled phone use within NEAR_PHONE_S of them. This includes nudges that fire while
+    switching between activities (unlabelled time), which a person feels just the same."""
+    phone_t = t[truth == 0]
+    return int(sum(not (np.abs(phone_t - t[i]) <= NEAR_PHONE_S).any() for i in fired))
+
+
 def score(truth, off, t, blocks):
-    """Phone-vs-work scores over labelled windows, plus the simulated nudge."""
+    """Phone-vs-work scores over labelled windows, plus the simulated nudge and watch buzz."""
     on_m, off_m = truth == 1, truth == 0
     caught = float(off[off_m].mean()) if off_m.any() else np.nan
     fa = float(off[on_m].mean()) if on_m.any() else np.nan
     fired = nudges(off, t)
-    false_n = int(sum(truth[i] == 1 for i in fired))
-    on_hours = on_m.sum() * HOP / 3600
+    false_n = false_count(fired, truth, t)
+    false_b = false_count(nudges(off, t, WATCH_NUDGE_S), truth, t)
+    on_hours = (truth != 0).sum() * HOP / 3600          # all time that is not phone use, transitions included
     phone_blocks = np.unique(blocks[off_m])
     delays, hit = [], 0
     for b in phone_blocks:
@@ -252,6 +262,7 @@ def score(truth, off, t, blocks):
     return {"balanced": float(np.nanmean([caught, 1 - fa])), "caught": caught, "false_alarm": fa,
             "onoff": float((off[lab] == (truth[lab] == 0)).mean()) if lab.any() else np.nan,
             "false_nudges_per_h": false_n / on_hours if on_hours else np.nan, "false_nudges": false_n,
+            "false_buzzes": false_b, "false_buzzes_per_h": false_b / on_hours if on_hours else np.nan,
             "on_task_min": on_m.sum() * HOP / 60,
             "phone_nudged": hit / len(phone_blocks) if len(phone_blocks) else np.nan,
             "median_delay_s": float(np.median(delays)) if delays else np.nan}
@@ -296,6 +307,7 @@ def summarize(folds, k=1, threshold=0.5):
     s = [score(f["truth"], smooth_mean(f["p"], k) >= threshold, f["t"], f["block"]) for f in folds]
     out = {key: float(np.nanmean([x[key] for x in s])) for key in s[0]}
     out["false_nudges"] = int(sum(x["false_nudges"] for x in s))
+    out["false_buzzes"] = int(sum(x["false_buzzes"] for x in s))
     out["macro_f1"] = float(np.mean([f["macro_f1"] for f in folds]))
     out["activity_acc"] = float(np.mean([f["activity_acc"] for f in folds]))
     out["per_held_out"] = [round(x["balanced"], 3) for x in s]
@@ -526,6 +538,7 @@ def main():
                 out_.append(score(tb["truth"], smooth_mean(pp, k) >= 0.5, tb["t"], tb["block"]))
             agg = {key: float(np.nanmean([o[key] for o in out_])) for key in out_[0]}
             agg["false_nudges"] = int(sum(o["false_nudges"] for o in out_))
+            agg["false_buzzes"] = int(sum(o["false_buzzes"] for o in out_))
             return agg
 
         main_raw, main_sm = test_score(final, te, 1), test_score(final, te, smooth_n)
@@ -555,10 +568,11 @@ def main():
 
         def row(name, s):
             return (f"| {name} | **{pct(s['balanced'])}** | {pct(s['caught'])} | {pct(s['false_alarm'])} | "
-                    f"{s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h) | {pct(s['phone_nudged'])} | "
+                    f"{s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h) | "
+                    f"{s['false_buzzes']} ({s['false_buzzes_per_h']:.1f}/h) | {pct(s['phone_nudged'])} | "
                     f"{s['median_delay_s']:.0f} s |")
-        head_row = ("| | Balanced on/off | Phone caught | False alarms | False nudges | Phone activities nudged "
-                    "| Median nudge delay |\n|---|---|---|---|---|---|---|")
+        head_row = ("| | Balanced on/off | Phone caught | False alarms | False nudges (10 s) | False watch buzzes "
+                    "(2 min) | Phone activities nudged | Median nudge delay |\n|---|---|---|---|---|---|---|---|")
         labs = sorted(set(yl) | set(pl))
         plot_confusion(yl, pl, labs, os.path.join(out, "confusion_test.png"), f"TEST, {best.model}: % of each actual activity")
         per = pd.DataFrame({"activity": labs,
@@ -591,7 +605,9 @@ def main():
             "should be near 1.", "", md_table(look_df), "",
             "*Balanced on/off* is the mean of *phone caught* (phone windows flagged) and work time left alone "
             "(1 − *false alarms*). A *nudge* fires after "
-            f"{NUDGE_S} s flagged as phone in a row; one during work is false. The delay counts from the start of "
+            f"{NUDGE_S} s flagged as phone in a row (the watch buzzes after {WATCH_NUDGE_S} s); it is false when no "
+            f"labelled phone use lies within {NEAR_PHONE_S} s of it, so nudges while switching between activities "
+            "count as false. Per hour means per hour of time not on the phone. The delay counts from the start of "
             "the labelled phone activity, which begins 3 s after the runner click.", ""]
     else:
         s = summarize(cv_folds[(best.window_s, best.features, best.model)], smooth_n)
@@ -637,13 +653,13 @@ def main():
         "Sessions:", "", md_table(inv), ""]
     def cv_row(name, s_):
         return (f"| {name} | **{pct(s_['balanced'])}** | {pct(s_['caught'])} | {pct(s_['false_alarm'])} | "
-                f"{s_['false_nudges']} | {pct(s_['phone_nudged'])} | {s_['per_held_out']} |")
+                f"{s_['false_nudges']} | {s_['false_buzzes']} | {pct(s_['phone_nudged'])} | {s_['per_held_out']} |")
     held = ", ".join(f"{s['name']} ({s['participant']})" for s in train)
     base_lines = ["## 2b. Classifier vs the baselines, holding out one training session at a time", "",
                   f"Held-out sessions, in order: {held}. A session from a person missing from the other "
                   "sessions is a cross-person test.", "",
-                  "| | Balanced on/off | Phone caught | False alarms | False nudges | Phone activities nudged "
-                  "| Balanced per held-out session |", "|---|---|---|---|---|---|---|"] + [
+                  "| | Balanced on/off | Phone caught | False alarms | False nudges (10 s) | False watch buzzes "
+                  "(2 min) | Phone activities nudged | Balanced per held-out session |", "|---|---|---|---|---|---|---|---|"] + [
                   cv_row(n, s_) for n, s_ in base_cv] + [""]
     lines = lines + base_lines
     tail = ["## 5. All candidates", "", f"Held out {how}. TEST was not involved.", "",
