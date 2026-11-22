@@ -2,7 +2,7 @@
 
 **Recording other people:** use the participant study (session STUDY in the runner). Protocol, consent, privacy and withdrawal: [STUDY.md](STUDY.md).
 
-Built 11–12 Nov 2026 for the final project (due **Tue 17 Nov 23:55**). Use it to record labelled wrist-motion sessions and turn each one into a labelled CSV. The whole picture is in `../HANDOFF.md`; this file is the protocol and its history, newest first.
+Use it to record labelled wrist-motion sessions and turn each one into a labelled CSV. The project overview is in `../README.md`; this file is the protocol and its history, newest first.
 
 | File | What it does |
 |---|---|
@@ -46,7 +46,7 @@ The sections below document the earlier clap-based and offline workflows.
 
 The recording watch is now a **Galaxy Watch5 Pro** running our own app (`../FocusWatch/`). Follow **`../FocusWatch/WATCH-SETUP.md`**: one setup command, then START/STOP on the watch per session.
 - Sessions land in `sessions/LIVE_<time>/stream.csv`. Drop the runner's timestamp file into the same folder and run `segment.py` on it, as below.
-- The Apple Watch Series 3 can't take our own app (paired iPhone on iOS 26; see `../HANDOFF.md`, section 11). It stays the **backup recorder** through HemiPhysioData (section 1).
+- An Apple Watch Series 3 was tried first and dropped: our own app could not be installed on it (paired iPhone on iOS 26), and the HemiPhysioData app could not stream live. `segment.py` can still read HemiPhysioData files (section 1).
 
 ## 1. How the raw data gets off the watch — UPDATE 11 Nov 14:30: use HemiPhysioData
 

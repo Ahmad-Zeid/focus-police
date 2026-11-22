@@ -36,7 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "..", "Data Collection", "sessions")
 COLS = ["time", "userAccelerationX", "userAccelerationY", "userAccelerationZ",
         "gravityX", "gravityY", "gravityZ", "rotationRateX", "rotationRateY", "rotationRateZ",
-        "roll", "pitch", "yaw"]          # Apple Watch (WristStream); the Galaxy app sends its own "cols"
+        "roll", "pitch", "yaw"]          # default columns; the watch app sends its own "cols"
 
 state = {"last_seen": 0.0, "session": None, "device": None, "total": 0, "files": {}, "cols": COLS,
          "calib": None}                 # calib: {"gravity": [x, y, z], "session", "time"} of the current recording

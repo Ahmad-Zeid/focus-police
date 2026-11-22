@@ -1,69 +1,103 @@
 # Focus Police
 
-A watch on the wrist streams motion to a laptop, which works out what you are doing at your desk and nudges you after 10 seconds on your phone. CMPS 297AH Wearable Sensing final project, due Tue 17 Nov 2026, 23:55.
+**Telling desk work from phone use with a motion sensor on the wrist.** A smartwatch streams wrist motion to a laptop; a classifier decides every half second whether you are doing desk work or using your phone; after 10 s on the phone the page nudges you, and after 2 minutes the watch vibrates. A phone page shows whether you are focused, the current activity and a timeline of the session.
 
-[`HANDOFF.md`](HANDOFF.md) has the full account: what was built, how it was tested, and why each decision was made.
+CMPS 297AH Wearable Sensing, Fall 2026, American University of Beirut. Team muyTracker: Ahmad Zeid, Ali Sleiman, Mohamad Alame.
 
-## Where things stand (22 Nov)
+## What is in this submission
 
-- **Detection version 2** Each session now starts with a 5 s **calibration** (hands resting on the keyboard), and the model also reads **wrist angle** and the **last 10–30 s**. On a session from a person the model never saw, phone-vs-work accuracy went from about 68% to 89–94%; on the current test session it is 97% with no false nudges. Measured in [`Model/lab/FINDINGS.md`](Model/lab/FINDINGS.md).
-- **Data (22 Nov, evening):** labelled sessions from 4 people (codes, no names): P1 (2), P-8BZH (3), P-MQME (1) for training, and **P2 kept aside as the test person** (2 scripted sessions; their NATURAL session is scored separately). Models are compared by **leaving one person out**: every score is on someone the model never saw.
-- **Results** ([`Model/REPORT.md`](Model/REPORT.md)): leaving one person out, balanced phone-vs-work **91.4%** (phone caught 83.9%, false alarms 1.1%); P1 96.7%, P-8BZH 96.3%, **P-MQME 66.3%** (holds the phone face-up and low, unlike everyone else: the clearest failure case). On the test person P2: **93.6%**, every phone activity nudged, median delay 9 s, but 12.4% false alarms (mostly holding a cup). P2's unscripted NATURAL session: 96.0% of phone time caught, no false alarms. Baselines on P2: reference paper 85.1%, wrist-angle threshold 77.5%, movement threshold 50.0%.
-- The live model is refit on every session, TEST and NATURAL included (`train.py --test-participant P2 --deploy-all`).
-- **Baselines from the proposal** (`Model/baseline.py`): a single threshold on wrist movement scores 46–53% (about chance), a threshold on calibrated wrist angle 76–85% (it misses phone calls), the reference paper's setting (raw accelerometer, Naive Bayes) 78–79%. The report also has a look-alike table (cup, bottle, drinking vs phone).
-- **Focus page for the phone** at `http://<laptop address>:8000/focus`: current status, a timeline of the whole session, focus share, distractions and the longest focus stretch, as the proposal's output describes. Saved per recording as `focus_summary.json`.
-- The watch buzzes after **2 minutes** off task, as in the proposal; the live page nudges after 10 s and shows the watch countdown. `FOCUS_WATCH_NUDGE_S=20` shortens the buzz for a demo.
-- The runner asks for the calibration automatically; on the live page, press **Calibrate** after starting the watch.
-- **Participant study** Recording other people follows a written protocol with read-aloud consent, random participant codes, names kept off the data (a git-ignored roster), and a withdrawal command. Training holds out one person at a time. Everything is in [`Data Collection/STUDY.md`](Data%20Collection/STUDY.md).
-- Runs on macOS and Windows (`FocusWatch/setup-watch.ps1` on Windows). Training, analysis and replay need no watch.
+| | Where |
+|---|---|
+| **Project report (PDF)** | [`Report/Focus Police - Final Report.pdf`](Report/Focus%20Police%20-%20Final%20Report.pdf) (Word version next to it) |
+| **Presentation slides (PDF)** | [`Report/Focus Police - Slides.pdf`](Report/Focus%20Police%20-%20Slides.pdf) |
+| **Code** | `FocusWatch/` (watch app), `WristStream/` (laptop receiver and pages), `Data Collection/` (session runner, labelling), `Model/` (features, training, evaluation) |
+| **Data and reference labels** | `Data Collection/sessions/`: every raw recording (`stream.csv`), its labels (`labelled.csv`, `segments.csv`), the runner's timestamp log and a label check plot (`check.png`) |
+| **Saved models** | `WristStream/model.pkl` (main model) and `WristStream/model_instant.pkl` (instant model) |
+| **Full evaluation output** | [`Model/REPORT.md`](Model/REPORT.md) and every training run in `Model/results/`; the experiments behind each design choice in [`Model/lab/FINDINGS.md`](Model/lab/FINDINGS.md) |
+| **Dependencies** | [`requirements.txt`](requirements.txt) (Python); the watch app builds with Gradle (`FocusWatch/`) |
 
-## The five commands that matter
+## Results in brief
 
-Set up Python once (3.10 or newer):
+All scores are on people the model never saw, predicted every 0.5 s on the continuous recording, as the live page runs. Details and limitations are in the report.
+
+- **Test person (P2), set aside before any choice:** 93.6% balanced phone-vs-work accuracy, 99.5% of phone time caught, every phone activity nudged after a median of 9 s, no false watch vibrations. Most false alarms come from holding a cup, the look-alike the proposal predicted.
+- **Unscripted session** (real work and real phone use): 96% of phone time caught, no work flagged as phone.
+- **Baselines** on P2: threshold on wrist movement 50% (chance), threshold on wrist angle 77.5% (misses phone calls), the reference paper's setting (raw accelerometer, Naive Bayes) 85.1%.
+- **Leaving one person out:** 96.7%, 96.3% and 66.3%. The last person holds the phone differently from everyone else; the report explains this failure.
+
+## Hardware
+
+- A Wear OS 3+ smartwatch. We used two borrowed Samsung watches: a Galaxy Watch5 Pro (SM-R920) and a Galaxy Watch4 (SM-R870), on the left wrist.
+- A laptop (macOS or Windows) on the same Wi-Fi as the watch. Campus Wi-Fi may block devices from reaching each other; a phone hotspot works.
+- Optional: a phone on the same Wi-Fi to show the focus page.
+
+Training, evaluation and replaying recordings need no watch.
+
+## Set up and run
+
+Python 3.10 or newer, once:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 ```
 
-Train on all labelled sessions and write `Model/REPORT.md`:
-
-```bash
-cd Model && python3 train.py
-```
-
-Train with one or more participants set aside as the test set (the participant study):
-
-```bash
-cd Model && python3 train.py --test-participant P-XXXX
-```
-
-Start the laptop receiver (live page at http://localhost:8000, session runner at http://localhost:8000/runner):
-
-```bash
-cd WristStream && python3 receiver.py
-```
-
-Replay a recording into the live page when there is no watch (start a test receiver first with `python3 receiver.py 8010 /tmp/focus-test`):
-
-```bash
-cd WristStream && python3 replay.py "../Data Collection/sessions/LIVE_20261112-233400/stream.csv" http://localhost:8010
-```
-
-Set up a watch (steps in `FocusWatch/WATCH-SETUP.md`):
+**Install the watch app** (step by step in [`FocusWatch/WATCH-SETUP.md`](FocusWatch/WATCH-SETUP.md); the built app is `FocusWatch/FocusPolice-watch.apk`):
 
 ```bash
 cd FocusWatch && bash setup-watch.sh
 ```
 
-## Folders
+On Windows: `FocusWatch/setup-watch.ps1`.
+
+**Start the laptop receiver.** It prints the address to type into the watch app:
+
+```bash
+cd WristStream && python3 receiver.py
+```
+
+If port 8000 is taken, pass another one, e.g. `python3 receiver.py 8001`, and type `<laptop address>:8001` on the watch. Then press START on the watch and open:
+
+| Page | Address |
+|---|---|
+| Focus page (made for a phone): focused or not, the activity, the instant prediction, the session timeline and summary | `http://<laptop address>:8000/focus` |
+| Live page: signals, probabilities, nudge | `http://localhost:8000` |
+| Session runner: guided, labelled recordings | `http://localhost:8000/runner` |
+
+Before use, calibrate: rest both hands on the keyboard and press **Calibrate** (on the focus page, the live page or in the runner).
+
+**Without a watch,** replay a recording into a second receiver that writes to a scratch folder:
+
+```bash
+cd WristStream && python3 receiver.py 8010 /tmp/focus-test
+```
+
+```bash
+cd WristStream && python3 replay.py "../Data Collection/sessions/LIVE_20261117-120625/stream.csv" http://localhost:8010
+```
+
+**Retrain and re-evaluate** (writes `Model/REPORT.md` and `Model/results/<time>/`, then saves both live models):
+
+```bash
+cd Model && python3 train.py --test-participant P2 --deploy-all
+```
+
+## How it works
 
 | Folder | What it is |
 |---|---|
-| `FocusWatch/` | the Wear OS watch app, its built APK and setup scripts |
-| `WristStream/` | the laptop side: receiver, live page, live model. (Named after an abandoned Apple Watch app, whose source is also in there) |
-| `Data Collection/` | the session runner, the labelling script, and every recording in `sessions/` |
-| `Model/` | features, training, reports |
+| `FocusWatch/` | Wear OS app (Kotlin): samples accelerometer, gyroscope and gravity at 50 Hz, streams them over Wi-Fi with the screen off, keeps a backup on the watch, and vibrates when the laptop says so |
+| `WristStream/` | laptop side: `receiver.py` saves every sample, runs both models every 0.5 s and serves the pages; `live_model.py` loads the models; `focus_log.py` keeps the session timeline; `replay.py` plays a recording back |
+| `Data Collection/` | `session-runner.html` guides a recording and logs each activity on the watch's clock; `segment.py` turns a recording into labels; `STUDY.md` is the participant-study protocol; `sessions/` holds the data |
+| `Model/` | `features.py` (shared by training and the live page), `train.py` (comparison, evaluation, report, deployment), `baseline.py` (the proposal's threshold baseline), `lab/` (experiments) |
 
-The four folders find each other by relative path.
+**Main model:** a random forest on a 4 s window plus 10 s and 30 s of context, calibrated to the user's resting pose and trained on mirrored copies so it serves either wrist. Its answer is reported as four classes: desk work, drinking, holding a cup and phone. It decides focused or not and drives the nudge.
 
-`localhost` in the addresses above means "this computer": the pages come from the receiver running on your own laptop, so they work for whoever runs it.
+**Instant model:** the same classifier on a 2 s window with no context and no averaging, shown under the main prediction, so a single sip or a switch of activity appears within about two seconds.
+
+## Data and privacy
+
+Participants are identified by random codes (P1, P2, P-8BZH, P-MQME). Names and contacts stay in a private roster on the recording laptop, excluded from this repository. Consent, privacy and withdrawal are described in [`Data Collection/STUDY.md`](Data%20Collection/STUDY.md). Sessions without a runner log (connection tests, live tries) are kept as raw data and are not used for training or testing.
+
+## Tools and sources
+
+Python (NumPy, pandas, SciPy, scikit-learn, Matplotlib), Kotlin and Wear OS. Starting point: Mosin, Min and Salamy, *Using a Wrist-Worn Accelerometer to Detect Off-Task Activities While Studying or Working* (2025), doi.org/10.1007/978-3-031-94953-1_12. AI assistants (Claude Code, OpenAI Codex) helped write code; the report lists how.

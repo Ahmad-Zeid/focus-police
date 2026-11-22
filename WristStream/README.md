@@ -1,96 +1,54 @@
-# WristStream
+# WristStream: the laptop side
 
-A watch-only app (no iPhone app) that reads wrist motion at 50 Hz and sends it to the laptop over HTTP every second. It's the live data path for the Focus Police demo, and it can also record training sessions.
+Receives the watch's motion stream, saves it, runs the models and serves the pages.
 
 ```
-Apple Watch (WristStream) --HTTP POST every 1 s--> laptop receiver.py --> sessions/LIVE_<time>/stream.csv
-                                                                     \--> http://localhost:8000 status page
+Galaxy Watch (FocusWatch app) --HTTP POST every 1 s--> receiver.py --> Data Collection/sessions/LIVE_<time>/stream.csv
+                                                          |--> main model + instant model, every 0.5 s
+                                                          |--> pages: /focus (phone), / (live), /runner
+                                                          \--> reply to the watch: vibrate after 2 min off task
 ```
 
-- **What it sends, per sample:** time, acceleration with gravity removed (x/y/z, g), gravity (x/y/z), rotation rate (x/y/z, rad/s), roll/pitch/yaw. These are the same Core Motion values HemiPhysioData records, so the two kinds of recording can be mixed.
-- **Screen off:** a watchOS "physical therapy" runtime session keeps the app running with the screen off, for **up to 1 hour** per start. It needs no paid account.
-- **Laptop unreachable:** the watch holds up to 10 minutes of data and sends it once the laptop answers again.
-- **Phone:** no app on it, but the watch still reaches the network *through* the paired iPhone when they're near each other. That's how watchOS works, not something we chose. Keep the iPhone nearby with Bluetooth and Wi-Fi on.
-
-Built 11 Nov 2026. It compiles for watchOS 8.0, including the Series 3's 32-bit chip, and the receiver was tested with a fake batch. **Not yet tested on the watch.**
-
-## Network: same Wi-Fi, and check campus Wi-Fi early
-
-The watch sends to a **local** address (e.g. `192.168.0.10`), so it only works inside one local network:
-- **iPhone nearby:** watch → Bluetooth → iPhone → the iPhone's Wi-Fi → router → laptop.
-- **iPhone away:** watch → its own Wi-Fi (Series 3: 2.4 GHz only, networks the iPhone already knows) → router → laptop.
-
-So the **laptop and iPhone must be on the same Wi-Fi**, and the iPhone must not be on cellular only. The laptop's address changes with the network: `receiver.py` prints the current one, and you type it into the watch's Server field.
-
-**Campus networks often block devices from talking to each other** ("client isolation"). Test AUB Wi-Fi well before the demo. If it's blocked, run a separate small network: a travel router, or a hotspot from a second phone, with the laptop and iPhone both joined.
-
-## Which Xcode (11 Nov)
-
-**Xcode 27 can't build for the Series 3** (it supports watchOS 9+ only and has dropped the armv7k chip). **Xcode 16.4** is installed next to it as `/Applications/Xcode-16.4.app`. Its window refuses to open on macOS Tahoe, but its command line works, and that's how the app is built:
+## Run
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode-16.4.app/Contents/Developer xcodebuild -project WristStream.xcodeproj -scheme WristStream -destination 'generic/platform=watchOS' build
+python3 receiver.py              # port 8000, saves to ../Data Collection/sessions
+python3 receiver.py 8001         # another port (type <laptop address>:8001 on the watch)
+python3 receiver.py 8010 /tmp/x  # another port and a scratch folder, e.g. for replays
 ```
 
-Built this way it covers all three watch chips (armv7k, arm64_32, arm64). Sign in to your Apple ID in **Xcode 27** (Settings → Accounts); the account is shared with 16.4.
-
-## One-time setup (about 15–30 min, mostly waiting on Xcode)
-
-1. **Sign in to Xcode:** Xcode → Settings → Accounts → **+** → Apple ID. A normal free Apple ID works.
-2. **iPhone:** plug it into the Mac with a cable, unlock it, and tap *Trust*. Turn on **Developer Mode** (Settings → Privacy & Security → Developer Mode). The phone restarts.
-3. **Watch:** unlock it and keep it near the phone. Xcode finds it through the iPhone. The first time, Xcode spends a while "preparing" the watch.
-4. In Xcode (the project is `WristStream.xcodeproj`): click the **WristStream** target → *Signing & Capabilities* → Team = **your name (Personal Team)**.
-5. At the top of the Xcode window, choose your **Apple Watch** as the run destination, then press **▶ Run**.
-6. If the watch says the developer is untrusted, trust it on the iPhone (Settings → General → VPN & Device Management) and/or on the watch (Settings → General → Profiles or Device Management).
-
-With a free account the app stops opening after **7 days**. Press Run again in Xcode to reinstall it.
-
-## Every time
-
-1. On the laptop:
-
-```bash
-cd "WristStream" && python3 receiver.py
-```
-
-   - It prints the address the watch should use, e.g. `http://192.168.0.10:8000`. If macOS asks whether Python may accept incoming connections, click **Allow**.
-2. On the watch, open WristStream and check the **Server** field matches that address. Tap **Start**.
-   - The status should turn green: *Streaming*.
-3. Watch it live at http://localhost:8000 (or from the phone's browser at the printed address).
-4. To label a live session, put the runner's timestamp file into the new `sessions/LIVE_<time>/` folder and run `segment.py` on it, as with any other session.
+It prints the laptop's address for the watch app and the phone. If macOS asks whether Python may accept incoming connections, click **Allow**. The watch and the laptop must be on the same Wi-Fi, and that network must let devices reach each other (campus Wi-Fi often does not; a phone hotspot works).
 
 ## Files
 
-| File | |
+| File | What it does |
 |---|---|
-| `WristStream/Streamer.swift` | motion reading, background session, batching, HTTP |
-| `WristStream/WristStreamApp.swift` | the watch screen: Start/Stop, status, rate, server field |
-| `project.yml` | XcodeGen config. Rebuild the project file with `xcodegen generate` after changing it |
-| `receiver.py` | laptop receiver: saves the CSV, serves the live page, runs the classifier every 0.5 s. Used by both the Apple and the Galaxy app |
-| `live.html` | the live page at http://localhost:8000. See *The live page* below |
-| `live_model.py` | the classifier the page shows: `features()`, `load()`, and the on/off-task split. A labelled placeholder until `model.pkl` exists |
-| `replay.py` | plays a recorded session into a receiver as if live, to test the page or rehearse the demo without the watch |
+| `receiver.py` | HTTP server: `POST /ingest` from the watch, saves every sample, runs both models every 0.5 s, the 10 s nudge and the 2 min watch vibration, calibration (`POST /calibrate`), the session runner's log (`POST /runner-log`), the pages |
+| `live_model.py` | loads `model.pkl` (main) and `model_instant.pkl` (instant); predicts and reports the class (desk work, drinking, holding a cup, phone) and the most likely activity inside it |
+| `model.pkl`, `model_instant.pkl` | the trained models, written by `../Model/train.py` |
+| `focus_log.py` | the session's focus timeline: one point per second, nudges, watch vibrations and the summary, saved as `focus_summary.json` with the recording |
+| `focus.html` | the focus page at `/focus`, made for a phone |
+| `live.html` | the live page at `/`: signals, probabilities, nudge banner |
+| `replay.py` | plays a recording into a receiver as if the watch were sending it |
 
-## The live page (added 12 Nov)
+## The pages
 
-Open http://localhost:8000 while the receiver runs. It shows:
-- **Three live graphs**, scrolling over the last 10 s: motion (acceleration with gravity removed), rotation (gyroscope) and wrist angle (gravity direction). They run about 1.3 s behind real time because the watch sends once a second; that delay keeps the scrolling smooth.
-- **The prediction**: the current activity, ON/OFF TASK, the confidence in this guess, every class's probability, a 2-minute on/off strip, and a red **nudge** banner after 10 s off task in a row (`NUDGE_S` in receiver.py).
-- **Focus page** (`/focus`, `focus.html` + `focus_log.py`): the proposal's "live current activity and a focus timeline for the session", made for a phone. Open `http://<laptop address>:<port>/focus` on a phone on the same Wi-Fi (the receiver prints the address). It shows FOCUSED / ON YOUR PHONE with the nudge and watch-buzz countdowns, the session's focus share, focus and phone time, distractions (10 s or more on the phone), the longest focus stretch, a timeline of the whole recording with the nudges marked, and when each distraction ended. It has its own Calibrate button. The summary is saved next to the recording as `focus_summary.json` every 30 s.
-- **Watch vibration**: the updated Galaxy Watch app buzzes once after 2 minutes of continuous off-task predictions, as in the proposal (`WATCH_NUDGE_S` in receiver.py; for a short demo start the receiver with `FOCUS_WATCH_NUDGE_S=20`). The receiver sends the reminder with its reply to a live upload.
-- **The model's name and its test accuracy.** Confidence (live, per guess) and accuracy (measured once on the held-out test session) are shown separately on purpose.
+- **Focus page** (`/focus`): FOCUSED or ON YOUR PHONE from the main model, with the activity under it (e.g. *Desk work: typing*); under that, **right now** from the instant model; while on the phone, countdowns to the nudge and to the watch vibration; the session's focus share, focus and phone time, distractions (10 s or more on the phone), longest focus stretch, a timeline of the whole session with the nudges marked, and how long each distraction lasted. It has a Calibrate button.
+- **Live page** (`/`): three scrolling graphs (movement, rotation, wrist angle), the prediction and every class's probability, a 2-minute on/off strip, the nudge banner, the model's name and its test accuracy.
+- **Session runner** (`/runner`): guides a labelled recording; see `../Data Collection/README.md`.
 
-**Plugging in the trained model:** `../Model/train.py` does it: it saves `model.pkl` next to `live_model.py` (the classifier, its window/sensor/feature settings, the smoothing length, a name, and the on/off-task accuracy on TEST). Features come from `../Model/features.py`, shared by both sides. The receiver loads it within a second, with no restart. Until then a **placeholder** with hand-set thresholds runs, and the page labels it in orange as *not a result*. A model that crashes shows "model error" on the page; recording continues.
+**Off task** means the phone classes together reach 0.5, the same rule `train.py` scores. The nudge fires after `NUDGE_S` = 10 s off task in a row; the watch vibrates after `WATCH_NUDGE_S` = 120 s (set `FOCUS_WATCH_NUDGE_S=20` to shorten it for a demo).
 
-**Testing without the watch:** run a second receiver on another port, writing to a scratch folder, and replay a session into it:
+**Models:** the receiver reloads them within a second when `train.py` writes new ones. Without `model.pkl`, a hand-set placeholder runs and the page labels it in orange as not a result. A model that fails shows "model error"; recording continues.
+
+## Testing without the watch
+
 ```bash
-python3 receiver.py 8010 /tmp/rx
+python3 receiver.py 8010 /tmp/focus-test
 ```
+
 ```bash
-python3 replay.py "../Data Collection/sessions/LIVE_20261112-081101/stream.csv" http://localhost:8010
+python3 replay.py "../Data Collection/sessions/LIVE_20261117-120625/stream.csv" http://localhost:8010 --from 500
 ```
-Tested 12 Nov this way: graphs, placeholder predictions, hot-loading a dummy `model.pkl` (name and accuracy shown, nudge fired after 10 s off task), falling back to the placeholder when it was removed, and phone width (the prediction moves to the top).
 
-## Recording and labelling a session
-
-`http://localhost:8000/runner` guides the participant through timed activities once the watch is streaming. The runner uses the watch clock for the activity markers. **Save session** sends the activity log to `/runner-log` with the watch recording ID. The receiver saves the log alongside that recording, runs `segment.py`, and shows the label count and `check.png`. See the [recording guide](../Data%20Collection/README.md) for the current procedure.
+Then open http://localhost:8010/focus and press Calibrate during a stretch of typing.
