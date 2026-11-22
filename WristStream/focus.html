@@ -38,6 +38,9 @@ h2{font-size:.8rem;font-weight:700;margin:0 0 8px;color:var(--mute);text-transfo
 #status.on #dot{background:var(--on)} #status.off #dot{background:var(--off)}
 #activity{font-size:1.05rem;margin-top:6px}
 #timer{font:.9rem 'Courier New',monospace;color:var(--mute);margin-top:8px;min-height:1.2em}
+#instant{display:flex;align-items:baseline;gap:8px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--rule);font-size:1rem}
+#instant:empty{display:none}
+#instant .k{font:.75rem 'Courier New',monospace;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
 #status.off #timer{color:var(--off);font-weight:700}
 
 #calib{display:none;border-color:var(--warn)}
@@ -88,6 +91,7 @@ footer a{color:inherit}
     <div id="state"><span id="dot"></span><span id="statetext">Waiting for the watch</span></div>
     <div id="activity">Press START on the watch.</div>
     <div id="timer"></div>
+    <div id="instant"></div>
   </section>
 
   <section>
@@ -148,7 +152,20 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 
 let data = null;
 
+const DETAIL = {typing: 'typing', writing: 'writing', idle: 'reading / idle', calculator: 'calculator',
+                other_desk: 'other desk activity', phone_scroll: 'scrolling', phone_text: 'texting', phone_call: 'on a call'};
+function describe(label, activity){
+  const detail = activity && activity !== label ? `: ${DETAIL[activity] || name(activity).toLowerCase()}` : '';
+  return name(label) + detail;
+}
+function drawInstant(d){
+  const el = $('instant');
+  if (!d.connected || d.error || !d.instant_label){ el.innerHTML = ''; return; }
+  const c = d.instant_conf != null ? ` · ${Math.round(d.instant_conf * 100)}%` : '';
+  el.innerHTML = `<span class="k">right now</span><span>${describe(d.instant_label, d.instant_activity)}${c}</span>`;
+}
 function drawStatus(d){
+  drawInstant(d);
   const st = $('status');
   st.classList.remove('on', 'off');
   $('conn').textContent = d.connected ? 'watch connected' : 'watch not connected';
@@ -166,10 +183,7 @@ function drawStatus(d){
     $('timer').textContent = ''; return;
   }
   const conf = d.confidence != null ? ` · ${Math.round(d.confidence * 100)}% sure` : '';
-  const DETAIL = {typing: 'typing', writing: 'writing', idle: 'reading / idle', calculator: 'calculator',
-                  other_desk: 'other desk activity', phone_scroll: 'scrolling', phone_text: 'texting', phone_call: 'on a call'};
-  const detail = d.activity && d.activity !== d.label ? `: ${DETAIL[d.activity] || name(d.activity).toLowerCase()}` : '';
-  $('activity').textContent = name(d.label) + detail + conf;
+  $('activity').textContent = describe(d.label, d.activity) + conf;
   if (d.on_task){
     st.classList.add('on'); $('statetext').textContent = 'Focused'; $('timer').textContent = '';
   } else {

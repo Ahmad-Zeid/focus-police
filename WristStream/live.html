@@ -90,6 +90,7 @@ td{padding:3px 0;vertical-align:middle} td.n{width:42%} td.v{width:16%;text-alig
     <h2>Prediction</h2>
     <div id="label">—</div>
     <div id="task">waiting for data</div>
+    <div id="instantl" class="facts" style="margin:-4px 0 10px"></div>
     <div class="facts">confidence in this guess</div>
     <div class="bar"><i id="confbar" style="width:0"></i></div>
     <table id="probs"></table>
@@ -171,6 +172,9 @@ async function status(){
       const nice = l => ({hold_cup: 'holding a cup', idle: 'reading / idle', phone_scroll: 'scrolling',
                           phone_text: 'texting', phone_call: 'on a call'})[l] || l.replace(/_/g, ' ');
       label.textContent = nice(p.label) + (p.activity && p.activity !== p.label ? ': ' + nice(p.activity) : '');
+      instantl.textContent = p.instant_label ? 'right now (instant, 2 s, no context): ' + nice(p.instant_label) +
+        (p.instant_activity && p.instant_activity !== p.instant_label ? ': ' + nice(p.instant_activity) : '') +
+        (p.instant_conf != null ? ` · ${Math.round(p.instant_conf * 100)}%` : '') : '';
       task.textContent = p.on_task === true ? 'ON TASK' : p.on_task === false ? 'OFF TASK' : '';
       task.style.color = p.on_task === false ? css('--off') : css('--on');
     }
