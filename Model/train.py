@@ -127,6 +127,25 @@ def session_calibration(folder, df):
     return np.eye(3), "none (no calibration step and no typing)"
 
 
+# Moving the watch to the other wrist mirrors the motion across the body's midline: the x axis of every
+# direction (movement, gravity) flips, and so do the y and z axes of rotation. Training on mirrored copies of
+# every session lets one model serve either wrist (tested 22 Nov: no cost on the left wrist, held-out sessions
+# mirrored to the right went from 85% to 95% balanced).
+MIRROR_FLIP = ("userAccelerationX", "gravityX", "accX", "rotationRateY", "rotationRateZ")
+
+
+def mirrored(sess):
+    """A copy of a session as if the watch had been on the other wrist, recalibrated on the mirrored pose."""
+    df = sess["df"].copy()
+    for c in MIRROR_FLIP:
+        if c in df:
+            df[c] = -df[c]
+    R, how = session_calibration(os.path.join(SESSIONS, sess["folder"]), df)
+    if how == "calibration step":                      # the recorded pose, mirrored the same way
+        R = np.diag([-1.0, 1.0, 1.0]) @ R @ np.diag([-1.0, 1.0, 1.0])
+    return {**sess, "df": df, "R": R, "folder": sess["folder"] + " (mirrored)"}
+
+
 def load_sessions(root):
     out = []
     need = set(F.V2_COLUMNS) | set(F.SENSORS["acc"])
@@ -289,13 +308,15 @@ def halves(tb):
     return [{k: v[tb["t"] < mid] for k, v in tb.items()}, {k: v[tb["t"] >= mid] for k, v in tb.items()}]
 
 
-def cross_validate(model_name, tables):
-    """Leave-one-session-out. Returns one dict per held-out session with p_off and truth for later scoring."""
+def cross_validate(model_name, tables, extra=None):
+    """Leave-one-session-out. Returns one dict per held-out session with p_off and truth for later scoring.
+    extra: tables aligned with `tables` (the mirrored copies) that join training, except the held-out one's."""
     folds = []
     if len(tables) < 2:
-        tables = halves(tables[0])
+        tables, extra = halves(tables[0]), None
+    extra = extra or []
     for k, te in enumerate(tables):
-        m = fit(model_name, [tb for j, tb in enumerate(tables) if j != k])
+        m = fit(model_name, [tb for j, tb in enumerate(tables) if j != k] + [tb for j, tb in enumerate(extra) if j != k])
         p, P = p_off(m, te["X"])
         lab = te["label"] != None  # noqa: E711
         pred = m.classes_[P.argmax(1)]
@@ -422,6 +443,7 @@ def main():
     ap.add_argument("--no-deploy", action="store_true")
     ap.add_argument("--deploy-to", default=DEPLOY, help="where to save the live model (testing)")
     ap.add_argument("--jobs", type=int, default=-1)
+    ap.add_argument("--no-mirror", action="store_true", help="don't add mirrored (other-wrist) copies to training")
     ap.add_argument("--train-on-groups", action="store_true",
                     help="learn the classes in features.GROUPS directly instead of every recorded activity "
                          "(tried and dropped on 22 Nov; kept to reproduce the comparison)")
@@ -464,7 +486,10 @@ def main():
 
     windows_ = [4.0] if args.quick else WINDOWS
     models_ = ["Extra trees"] if args.quick else CANDIDATE_MODELS
-    everything = train + test + natural + otherhand
+    train_m = [] if args.no_mirror else [mirrored(s) for s in train]
+    test_m = [] if args.no_mirror else [mirrored(s) for s in test]
+    everything = train + test + natural + otherhand + train_m + test_m
+    where = {id(s): i for i, s in enumerate(everything)}
 
     # ---- features: one table per (session, window, feature set), computed in parallel
     configs = {(w, fs): {"window_s": w, **cfg} for w in windows_ for fs, cfg in FEATURE_SETS.items()}
@@ -482,14 +507,18 @@ def main():
 
     def tabs(cfg, group):
         ck = json.dumps(cfg, sort_keys=True)
-        return [TB[(ck, everything.index(s))] for s in group]
+        return [TB[(ck, where[id(s)])] for s in group]
+
+    def trn(cfg):
+        """Training tables: every training session and, unless --no-mirror, its mirrored copy."""
+        return tabs(cfg, train) + tabs(cfg, train_m)
 
     # ---- candidates, leave-one-session-out
     rows, cv_folds = [], {}
     for w in windows_:
         for fs, cfg in FEATURE_SETS.items():
             for mname in models_:
-                folds = cross_validate(mname, tabs(configs[(w, fs)], train))
+                folds = cross_validate(mname, tabs(configs[(w, fs)], train), tabs(configs[(w, fs)], train_m))
                 s = summarize(folds)
                 cv_folds[(w, fs, mname)] = folds
                 rows.append({"window_s": w, "features": fs, "model": mname, "cv_balanced": s["balanced"],
@@ -514,13 +543,13 @@ def main():
     for b, (bcfg, feat) in B.RULES.items():
         c = configs[(w, f"baseline:{b}")]
         rules[b] = (c, B.make(c, feat), feat)
-        base_cv.append((b, summarize(cross_validate(rules[b][1], tabs(c, train)))))
+        base_cv.append((b, summarize(cross_validate(rules[b][1], tabs(c, train), tabs(c, train_m)))))
     rc = configs[(w, "reference")]
     base_cv.append(("Reference-paper setting (raw accelerometer, Naive Bayes)",
-                    summarize(cross_validate(REFERENCE[0], tabs(rc, train)))))
+                    summarize(cross_validate(REFERENCE[0], tabs(rc, train), tabs(rc, train_m)))))
 
     # ---- final model
-    final = fit(best.model, tabs(cfg, train))
+    final = fit(best.model, trn(cfg))
     stamp = time.strftime("%Y%m%d-%H%M")
     out = os.path.join(args.out, stamp); os.makedirs(out, exist_ok=True)
     res.to_csv(os.path.join(out, "all_combinations.csv"), index=False)
@@ -552,18 +581,19 @@ def main():
             return agg
 
         main_raw, main_sm = test_score(final, te, 1), test_score(final, te, smooth_n)
+        right = test_score(final, tabs(cfg, test_m), smooth_n) if test_m else None
         R.update(test_acc=test_acc, test_bin=main_sm["balanced"])
         abl_rows = []
         for a, acfg in ABLATION.items():
             c = configs[(best.window_s, f"ablation:{a}")]
-            m = fit(best.model, tabs(c, train))
+            m = fit(best.model, trn(c))
             abl_rows.append((a, test_score(m, tabs(c, test), smooth_n)))
-        ref_model = fit(REFERENCE[0], tabs(rc, train))
+        ref_model = fit(REFERENCE[0], trn(rc))
         ref = test_score(ref_model, tabs(rc, test), 1)
         rule_rows, look = [], {}
         look[f"Chosen model ({best.model})"] = flagged_by_activity([p for _, p, _ in ts], te, smooth_n)
         for b, (c, factory, feat) in rules.items():
-            m = fit(factory, tabs(c, train))
+            m = fit(factory, trn(c))
             rule_rows.append((f"{b}: {m.describe(feat)}", test_score(m, tabs(c, test), 1)))
             look[b] = flagged_by_activity([p_off(m, tb["X"])[0] for tb in tabs(c, test)], tabs(c, test))
         look["Reference-paper setting"] = flagged_by_activity([p_off(ref_model, tb["X"])[0] for tb in tabs(rc, test)],
@@ -602,7 +632,8 @@ def main():
             f"TEST: {test_names}. Scored on the continuous recording, every {HOP:g} s, as the live page runs.", "",
             head_row,
             row(f"**Chosen model**, smoothed over {smooth_n} predictions as on the live page", main_sm),
-            row("Chosen model, each prediction on its own", main_raw),
+            row("Chosen model, each prediction on its own", main_raw)] + (
+            [row("Chosen model, watch on the other wrist (TEST mirrored, simulated)", right)] if right else []) + [
             row("Reference-paper setting: raw accelerometer, simple features, Naive Bayes", ref)] + [
             row(n, s_) for n, s_ in rule_rows] + ["",
             "The threshold rows are the proposal's baseline: one number per window and one cut-off, fitted on the "
