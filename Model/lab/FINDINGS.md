@@ -64,6 +64,21 @@ The watch measures the wrist's angle relative to gravity. The same activity look
 
 The rotation is computed from the median gravity direction of the 5 s pose and turns it to "watch face up" (`features.calibration_rotation`). Every 3-axis signal (movement, gravity, gyroscope) is rotated by it before features are computed. The running estimate fails because its reference keeps moving as the session goes on, so the same pose means different things at different times.
 
+## Which sensors (added 22 Nov, evening)
+
+Asked at the demo: "are you using all three sensors?" The watch records the **accelerometer** and the **gyroscope**, plus Android's fused virtual sensors built from them (linear acceleration = movement, gravity = wrist angle) and a rotation vector. The **magnetometer** is not recorded on its own and no model uses it. Until now every v2 experiment used one sensor set ("all": movement + gravity + gyroscope), so this was tested directly with `sensors.py`: same evaluation as above (extra trees, 4 s, calibrated, leave one session out), only the sensor set changes.
+
+| Sensors | Balanced | False alarms | P1 (other person) | Suleiman S1 | Suleiman S2 |
+|---|---|---|---|---|---|
+| accelerometer only (raw) | 94.5% | 4.9% | 94.6% | 94.8% | 94.0% |
+| gyroscope only | 74.0% | 6.2% | 64.7% | 81.9% | 75.3% |
+| accelerometer + gyroscope (raw) | 94.4% | 4.6% | 94.1% | 95.5% | 93.5% |
+| accelerometer split: movement + gravity | 94.9% | 4.8% | 95.5% | 94.5% | 94.6% |
+| all: movement + gravity + gyroscope | 94.5% | 4.8% | 94.7% | 95.2% | 93.7% |
+| all + wrist angle + context (shipped) | **95.4%** | **3.4%** | 96.3% | 92.6% | 97.2% |
+
+Reading: the **accelerometer carries the detection**; mostly through gravity, i.e. how the wrist is tilted. The gyroscope alone is much weaker, and adding it to the accelerometer changes nothing measurable (differences of about 1 point are within the noise of three sessions). The shipped model keeps the gyroscope because the stillness and context features use it and it costs nothing on the watch; an accelerometer-only model would do about as well. Same caveats as above: two people, three sessions, simulated calibration.
+
 ## What this does not show yet
 
 - **Two people, three sessions.** The cross-person number rests on one held-out session. It is promising, not proven.
@@ -91,6 +106,7 @@ The rotation is computed from the median gravity direction of the 5 s pose and t
 | `tune_smoothing.py` | smoothing and threshold sweep; lists missed phone activities and false nudges |
 | `errors.py` | per-activity errors and feature importance |
 | `look_calibration.py` | resting pose and activity angles before and after calibration |
+| `sensors.py` | which sensors: the same evaluation with each sensor set; writes `sensors_results.csv` |
 | `deep.py` | the 1D CNN comparison (needs `pip install torch`; not used live) |
 
 Run from this folder with the project's Python, e.g. `..\..\.venv\Scripts\python.exe run.py calibration`. Features are cached in `.cache/`; delete it after relabelling a session.

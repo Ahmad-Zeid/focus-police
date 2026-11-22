@@ -1,0 +1,21 @@
+session,participant,watch_wrist,dominant_hand,posture,index,round,activity,event,epoch_ms,iso_time,note,watch_epoch_ms
+STUDY,P1,left,right,sitting,-1,,,session_open,1795374200956,2026-11-22T19:03:20.956Z,strap=snug,
+STUDY,P1,left,right,sitting,-1,,,consent,1795374208496,2026-11-22T19:03:28.496Z,verbal consent; 18+,
+STUDY,P1,left,right,sitting,-1,,,calibrate,1795374218770,2026-11-22T19:03:38.770Z,pose 7 deg from face-up,
+STUDY,P1,left,right,sitting,0,1,writing,start,1795374241032,2026-11-22T19:04:01.032Z,,1795374239581
+STUDY,P1,left,right,sitting,0,1,writing,end,1795374301032,2026-11-22T19:05:01.032Z,,1795374299581
+STUDY,P1,left,right,sitting,1,1,drinking,start,1795374307885,2026-11-22T19:05:07.885Z,,1795374306653
+STUDY,P1,left,right,sitting,1,1,drinking,end,1795374367885,2026-11-22T19:06:07.885Z,,1795374366653
+STUDY,P1,left,right,sitting,2,1,phone_scroll,start,1795374373572,2026-11-22T19:06:13.572Z,,1795374372381
+STUDY,P1,left,right,sitting,2,1,phone_scroll,end,1795374433572,2026-11-22T19:07:13.572Z,,1795374432381
+STUDY,P1,left,right,sitting,3,1,idle,start,1795374451653,2026-11-22T19:07:31.653Z,,1795374450449
+STUDY,P1,left,right,sitting,3,1,idle,end,1795374511653,2026-11-22T19:08:31.653Z,,1795374510449
+STUDY,P1,left,right,sitting,4,1,typing,start,1795374542390,2026-11-22T19:09:02.390Z,,1795374541187
+STUDY,P1,left,right,sitting,4,1,typing,end,1795374602390,2026-11-22T19:10:02.390Z,,1795374601187
+STUDY,P1,left,right,sitting,5,1,phone_call,start,1795374627430,2026-11-22T19:10:27.430Z,,1795374626075
+STUDY,P1,left,right,sitting,5,1,phone_call,end,1795374687430,2026-11-22T19:11:27.430Z,,1795374686075
+STUDY,P1,left,right,sitting,6,1,hold_cup,start,1795374696840,2026-11-22T19:11:36.840Z,,1795374695519
+STUDY,P1,left,right,sitting,6,1,hold_cup,end,1795374756840,2026-11-22T19:12:36.840Z,,1795374755519
+STUDY,P1,left,right,sitting,7,1,phone_text,start,1795374764966,2026-11-22T19:12:44.966Z,,1795374763713
+STUDY,P1,left,right,sitting,7,1,phone_text,end,1795374824966,2026-11-22T19:13:44.966Z,,1795374823713
+STUDY,P1,left,right,sitting,-1,,,session_end,1795374828192,2026-11-22T19:13:48.192Z,,

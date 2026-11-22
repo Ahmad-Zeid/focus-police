@@ -3,6 +3,9 @@
     python train.py                 # everything, a few minutes
     python train.py --quick         # one window length, extra trees only: a fast sanity run
     python train.py --no-deploy     # don't touch the live page's model
+    python train.py --test-participant P-XXXX --deploy-all
+                                    # score on P-XXXX as usual, then deploy a model refit on EVERY session
+                                    # (test people included) for live use; the report's score stays honest
 
 Version 2 (22 Nov 2026). What changed and why is measured in lab/FINDINGS.md; in short:
   - Every session is handled as ONE CONTINUOUS STREAM, the way the live page sees it: a prediction every
@@ -100,7 +103,7 @@ def role_of(name):
         return "natural"
     if n.startswith("OTHERHAND"):
         return "otherhand"
-    if len(n) >= 2 and n[0] == "S" and n[1:].isdigit():
+    if (len(n) >= 2 and n[0] == "S" and n[1:].isdigit()) or n.startswith("STUDY"):
         return "train"
     return "ignored"
 
@@ -268,13 +271,17 @@ def halves(tb):
     return [{k: v[tb["t"] < mid] for k, v in tb.items()}, {k: v[tb["t"] >= mid] for k, v in tb.items()}]
 
 
-def cross_validate(model_name, tables):
-    """Leave-one-session-out. Returns one dict per held-out session with p_off and truth for later scoring."""
+def cross_validate(model_name, tables, groups=None):
+    """Leave-one-session-out, or leave-one-PARTICIPANT-out when `groups` (one participant per table) is given:
+    every session of the held-out person is scored by a model that never saw that person.
+    Returns one dict per held-out session with p_off and truth for later scoring."""
     folds = []
     if len(tables) < 2:
-        tables = halves(tables[0])
+        tables, groups = halves(tables[0]), None
+    if groups is None:
+        groups = list(range(len(tables)))
     for k, te in enumerate(tables):
-        m = fit(model_name, [tb for j, tb in enumerate(tables) if j != k])
+        m = fit(model_name, [tb for j, tb in enumerate(tables) if groups[j] != groups[k]])
         p, P = p_off(m, te["X"])
         lab = te["label"] != None  # noqa: E711
         pred = m.classes_[P.argmax(1)]
@@ -364,6 +371,11 @@ def main():
     ap.add_argument("--no-deploy", action="store_true")
     ap.add_argument("--deploy-to", default=DEPLOY, help="where to save the live model (testing)")
     ap.add_argument("--jobs", type=int, default=-1)
+    ap.add_argument("--test-participant", default="", help="comma-separated participant codes set aside as the "
+                    "test set: all their sessions, never used for any choice")
+    ap.add_argument("--by-session", action="store_true", help="hold out sessions, not participants")
+    ap.add_argument("--deploy-all", action="store_true", help="after scoring, refit the chosen model on all "
+                    "sessions, test included, and deploy that (more people in the live model; no score for it)")
     args = ap.parse_args()
     t_start = time.time()
     notes = []
@@ -381,9 +393,18 @@ def main():
     test = [s for s in sessions if s["role"] == "test"]
     natural = [s for s in sessions if s["role"] == "natural"]
     otherhand = [s for s in sessions if s["role"] == "otherhand"]
+    held = [c.strip() for c in args.test_participant.split(",") if c.strip()]
+    if held:
+        moved = [s for s in train if s["participant"] in held]
+        if not moved:
+            sys.exit(f"--test-participant: no training session belongs to {held}")
+        train = [s for s in train if s["participant"] not in held]
+        test += moved
+        notes.append(f"Test set: every session of participant(s) {', '.join(held)}, set aside before any choice. "
+                     "The model never saw these people.")
     if not train:
-        sys.exit("No training sessions (S1, S2, ...) found.")
-    if not test and len(train) >= 3:
+        sys.exit("No training sessions (S1, S2, ... or STUDY) found.")
+    if not test and len(train) >= 3 and not held:
         test = [train.pop()]
         notes.append(f"No TEST session was recorded, so the last training session ({test[0]['name']}, "
                      f"{test[0]['folder']}) was set aside as the test set.")
@@ -396,6 +417,11 @@ def main():
         notes.append("Some sessions have no recorded calibration step; their calibration pose was taken from the "
                      "first 5 s of typing, which is the same pose (hands on the keyboard). See the table below.")
     participants = sorted({s["participant"] for s in train})
+    by_person = len(participants) >= 3 and not args.by_session
+    cv_groups = [s["participant"] for s in train] if by_person else None
+    if by_person:
+        notes.append(f"Candidates compared by leaving one PARTICIPANT out at a time ({len(participants)} people): "
+                     "every score is on a person the model never saw.")
     if len(participants) < 3:
         notes.append(f"Training covers {len(participants)} participant(s) ({', '.join(participants)}). "
                      "Accuracy on a new person is the open question; record more people to measure it.")
@@ -426,7 +452,7 @@ def main():
     for w in windows_:
         for fs, cfg in FEATURE_SETS.items():
             for mname in models_:
-                folds = cross_validate(mname, tabs(configs[(w, fs)], train))
+                folds = cross_validate(mname, tabs(configs[(w, fs)], train), cv_groups)
                 s = summarize(folds)
                 cv_folds[(w, fs, mname)] = folds
                 rows.append({"window_s": w, "features": fs, "model": mname, "cv_balanced": s["balanced"],
@@ -541,6 +567,8 @@ def main():
         top = np.argsort(final.feature_importances_)[::-1][:12]
         imp = ("Features the model leans on most: " + ", ".join(f"`{names[i]}`" for i in top) + ".\n")
     how = "one half of the single training session at a time" if len(train) < 2 else "one whole training session at a time"
+    if by_person:
+        how = "one participant (all their sessions) at a time"
     head = [f"# Focus Police model report, {time.strftime('%d %b %Y %H:%M')}", "",
             "Generated by `Model/train.py` (version 2). Everything below is measured on the recordings in "
             "`Data Collection/sessions/`. Why version 2 looks the way it does: `Model/lab/FINDINGS.md`.", ""]
@@ -558,7 +586,11 @@ def main():
         f"false alarms {pct(best.cv_false_alarm)}); per held-out session {best.per_held_out}.",
         f"- {len(res)} candidates compared in {time.time() - t_start:.0f} s.", "",
         "Sessions:", "", md_table(inv), ""]
-    tail = ["## 5. All candidates", "", f"Held out {how}. TEST was not involved.", "",
+    per = summarize(cv_folds[(best.window_s, best.features, best.model)], smooth_n)["per_held_out"]
+    who = pd.DataFrame([{"held-out session": f"{x['name']} ({x['folder']})", "participant": x["participant"],
+                         "balanced on/off": pct(b)} for x, b in zip(train, per)])
+    tail = ["## 4. Each held-out session, chosen model", "", f"Held out {how}.", "", md_table(who), "",
+            "## 5. All candidates", "", f"Held out {how}. TEST was not involved.", "",
             md_table(res[show]), "", imp, "",
             "## 6. How to read this", "",
             "- **Balanced on/off accuracy** averages phone caught and work left alone, so a model that never flags "
@@ -576,11 +608,17 @@ def main():
         f.write(report.replace("](", f"](results/{stamp}/" if real else f"]({stamp}/"))
 
     if not args.no_deploy:
+        if args.deploy_all and test:
+            final = fit(best.model, tabs(cfg, train + test))
+            train = train + test                      # only for the name below; scoring is already done
+            kind = "balanced on/off on the test person, measured before they were added to this model"
+        else:
+            kind = "balanced on/off task, TEST session"
         name = (f"{best.model}, {best.features}, {cfg['window_s']:g} s, {len(train)} training session(s), "
                 f"{len(classes)} activities (trained {time.strftime('%d %b %H:%M')})")
         blob = {"model": final, "config": cfg, "smooth_n": int(smooth_n), "name": name,
                 "test_accuracy": float(R["test_bin"]) if R else None,
-                "test_accuracy_kind": "balanced on/off task, TEST session",
+                "test_accuracy_kind": kind,
                 "test_activity_accuracy": float(R["test_acc"]) if R else None,
                 "classes": list(final.classes_), "needs_calibration": bool(cfg.get("calibrated"))}
         with open(args.deploy_to, "wb") as f:

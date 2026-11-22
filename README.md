@@ -9,6 +9,7 @@ A watch on the wrist streams motion to a laptop, which works out what you are do
 - **Detection version 2** (branch `advanced-detection`). Each session now starts with a 5 s **calibration** (hands resting on the keyboard), and the model also reads **wrist angle** and the **last 10–30 s**. On a session from a person the model never saw, phone-vs-work accuracy went from about 68% to 89–94%; on the current test session it is 97% with no false nudges. Measured in [`Model/lab/FINDINGS.md`](Model/lab/FINDINGS.md).
 - Three labelled training sessions from two people (P1, Suleiman). More people and a fresh `TEST` session are the next steps (FINDINGS, "Next data").
 - The runner asks for the calibration automatically; on the live page, press **Calibrate** after starting the watch.
+- **Participant study** (branch `participant-study`). Recording other people follows a written protocol with read-aloud consent, random participant codes, names kept off the data (a git-ignored roster), and a withdrawal command. Training holds out one person at a time. Everything is in [`Data Collection/STUDY.md`](Data%20Collection/STUDY.md).
 - Runs on macOS and Windows (`FocusWatch/setup-watch.ps1` on Windows). Training, analysis and replay need no watch.
 
 ## The five commands that matter
@@ -23,6 +24,12 @@ Train on all labelled sessions and write `Model/REPORT.md`:
 
 ```bash
 cd Model && python3 train.py
+```
+
+Train with one or more participants set aside as the test set (the participant study):
+
+```bash
+cd Model && python3 train.py --test-participant P-XXXX
 ```
 
 Start the laptop receiver (live page at http://localhost:8000, session runner at http://localhost:8000/runner):

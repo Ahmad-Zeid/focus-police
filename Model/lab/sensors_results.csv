@@ -1,0 +1,7 @@
+sensors,balanced,phone_caught,false_alarm,false_nudges,activity_macro_f1,held out S1-P1,held out S1-P-8BZH,held out S2-P-8BZH
+accelerometer,0.945,0.938,0.049,1,0.527,0.946,0.948,0.94
+gyroscope,0.74,0.542,0.062,0,0.383,0.647,0.819,0.753
+accel + gyro (raw),0.944,0.933,0.046,1,0.534,0.941,0.955,0.935
+accel split: movement + gravity,0.949,0.945,0.048,0,0.516,0.955,0.945,0.946
+all: movement + gravity + gyro,0.945,0.938,0.048,1,0.531,0.947,0.952,0.937
+all + wrist angle + context (shipped),0.954,0.942,0.034,1,0.515,0.963,0.926,0.972

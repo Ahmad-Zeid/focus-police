@@ -245,6 +245,29 @@ class H(BaseHTTPRequestHandler):
         print(f"\n[calibrated] {session}: pose {face:.0f} deg from face-up, wobble {spread:.0f} deg")
         self.send_json({"ok": True, "face_up_deg": round(face, 1), **calib})
 
+    def roster(self):
+        """Participant study: the private roster (code -> name/contact) for finding someone's data if they
+        withdraw. Kept apart from the recordings, in Data Collection/study-private/ (git-ignored)."""
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            code = str(body.get("code", "")).strip()
+            if not code:
+                raise ValueError("no code")
+            folder = os.path.join(HERE, "..", "Data Collection", "study-private")
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, "roster.csv")
+            new = not os.path.exists(path)
+            with open(path, "a", encoding="utf-8", newline="") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["code", "name", "contact", "recording", "consent_time"])
+                w.writerow([code, body.get("name", ""), body.get("contact", ""), body.get("recording", ""),
+                            time.strftime("%Y-%m-%d %H:%M:%S")])
+            print(f"\n[roster] code {code} added to the private roster")
+            self.send_json({"ok": True})
+        except Exception as e:
+            self.send_json({"ok": False, "error": str(e)})
+
     def do_POST(self):
         if urlparse(self.path).path == "/runner-log":
             with runner_lock:
@@ -252,6 +275,9 @@ class H(BaseHTTPRequestHandler):
             return
         if urlparse(self.path).path == "/calibrate":
             self.calibrate()
+            return
+        if urlparse(self.path).path == "/roster":
+            self.roster()
             return
         if self.path != "/ingest":
             self.send_error(404); return

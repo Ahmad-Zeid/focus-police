@@ -193,6 +193,8 @@ python3 receiver.py 8010 /some/folder            # another port, another output 
 | `GET /predict` | current label, probabilities, on/off task, model name, accuracy, nudge state, 2-minute history |
 | `GET /runner` | the session runner page |
 | `POST /runner-log?name=<file>` | saves the runner's timestamp CSV into the folder of the recording in progress, waits 3 s for the last samples, runs `segment.py`, returns its output. A second runner file for the same recording is **merged** (block numbers shifted), and the earlier file is kept as `*.partN` |
+| `POST /calibrate` | stores the last 5 s of wrist pose as this recording's calibration (`calibration.json`) and for the live model; refuses if the wrist moved |
+| `POST /roster` | participant study: appends code, name, contact to `Data Collection/study-private/roster.csv` (git-ignored, never with the recordings). See `Data Collection/STUDY.md` |
 | `GET /check?folder=LIVE_...` | that session's `check.png` |
 
 **The live page** shows three graphs over the last 10 s (motion, rotation, wrist angle), drawn about 1.3 s behind real time so that once-a-second batches scroll smoothly; the predicted activity; ON/OFF TASK; the probability of each class; a 2-minute on/off strip; the model's name; and a red banner after `NUDGE_S = 10` seconds off task in a row. It deliberately separates **confidence** (how sure the model is about this window) from **accuracy** (measured once on a test session). With no test session the accuracy line reads "not measured yet".

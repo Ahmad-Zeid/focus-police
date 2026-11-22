@@ -63,6 +63,25 @@ summary { cursor: pointer; font-weight: 650; }
 progress { width: 100%; height: 8px; accent-color: var(--accent); display: block; margin: 0 auto 24px; }
 #stage .actions { justify-content: center; }
 #phase { min-height: 1.5em; font-weight: 650; }
+.pid { display: flex; gap: 6px; } .pid input { flex: 1; }
+.private { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 8px 0 24px; }
+.private p { margin: 0 0 8px; }
+.sheet { margin: 16px 0 24px; padding-left: 1.2em; } .sheet li { margin-bottom: 8px; }
+.checks { display: grid; gap: 8px; margin-bottom: 24px; } .checks label { display: flex; gap: 8px; align-items: baseline; }
+/* the activity's own material (typing test, reading passage, text to copy): stays up until Next activity */
+#stage.with-task h1 { font-size: clamp(1.6rem, 4.5vw, 2.25rem); }
+#stage.with-task #clock { font-size: 2.25rem; margin-bottom: 4px; }
+#stage.with-task #instruction { margin-bottom: 12px; }
+.task { text-align: left; margin: 0 auto 16px; }
+.passage { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px 20px; font-size: 1.05rem; line-height: 1.6; }
+.passage h2 { font: 650 1.1rem/1.3 var(--font-body); margin: 0 0 8px; }
+.passage p { margin: 0 0 10px; } .passage p:last-child { margin: 0; }
+#typer { display: block; width: 100%; height: 340px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+#offline-box { width: 100%; min-height: 120px; margin-top: 8px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font: inherit; }
+.small { font-size: .875rem; margin: 6px 0 0; }
+.stage-foot { margin-top: 32px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
+button.quiet { background: none; border-color: transparent; color: var(--muted); font-weight: 500; text-decoration: underline; min-height: 36px; padding: 4px 6px; }
+button.quiet:hover:not(:disabled) { background: none; color: var(--alert); }
 #checkimg { display: block; max-width: 100%; margin-top: 12px; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.5 var(--font-timer); }
 @media (max-width: 420px) {
@@ -82,14 +101,23 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.5 var(--font
     <p class="muted">Tap <strong>START</strong> on the watch. The laptop will guide you through one activity at a time.</p>
     <div class="fields">
       <label><span id="session-label">Session</span><select id="session" aria-labelledby="session-label">
-        <option value="PILOT" selected>Practice · PILOT</option>
+        <option value="PILOT">Practice · PILOT</option>
+        <option value="STUDY" selected>Study participant · STUDY</option>
         <optgroup label="Training"><option>S1</option><option>S2</option><option>S3</option><option>S4</option><option>S5</option><option>S6</option></optgroup>
         <option value="TEST">Separate test · TEST</option>
         <optgroup label="Extra tests"><option value="NATURAL">Natural use</option><option value="OTHERHAND">Phone in other hand</option></optgroup>
       </select></label>
-      <label>Participant ID<input id="participant" value="P1" maxlength="20" autocomplete="off"></label>
+      <label>Participant code<span class="pid"><input id="participant" value="P1" maxlength="20" autocomplete="off"><button type="button" id="newcode" class="secondary" title="Give this person a new random code">New</button></span></label>
       <label><span id="wrist-label">Watch wrist</span><select id="wrist" aria-labelledby="wrist-label"><option>left</option><option>right</option></select></label>
       <label><span id="hand-label">Writing hand</span><select id="dominant" aria-labelledby="hand-label"><option>right</option><option>left</option></select></label>
+      <label><span id="strap-label">Strap fit</span><select id="strap" aria-labelledby="strap-label"><option>snug</option><option>loose</option></select></label>
+    </div>
+    <div id="roster" class="private">
+      <p><strong>Private roster (optional).</strong> Saved only on this laptop in <code>Data Collection/study-private/</code>, never with the recording or in git. It lets us find and delete this person's data if they ask later. The recording only ever holds the code.</p>
+      <div class="fields">
+        <label>Name<input id="rname" autocomplete="off"></label>
+        <label>Contact (phone or email)<input id="rcontact" autocomplete="off"></label>
+      </div>
     </div>
     <p id="plan" class="muted"></p>
     <div class="actions"><button id="go" disabled>Start session</button></div>
@@ -105,18 +133,42 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.5 var(--font
     </details>
   </section>
 
+  <section id="consent" hidden aria-labelledby="consent-title">
+    <p class="muted">Read this to the participant</p>
+    <h1 id="consent-title" tabindex="-1">Before we start</h1>
+    <ul class="sheet">
+      <li><strong>What this is:</strong> a course project (CMPS 297AH, Wearable Sensing) that detects phone use at a desk from a smartwatch.</li>
+      <li><strong>What you do:</strong> wear the watch on your left wrist and do 8 everyday desk activities for 1 minute each, about 12 minutes in total.</li>
+      <li><strong>What is recorded:</strong> only the watch's motion sensors (movement and wrist angle), 50 times a second. No audio, video, location, health data, or anything on your phone.</li>
+      <li><strong>Your data:</strong> stored under the code <strong id="consent-code"></strong>, not your name. It is used only to train and test this project's model, and it is shared with the course instructor as part of the submission.</li>
+      <li><strong>Voluntary:</strong> you can stop at any point without giving a reason. Anything recorded so far is deleted if you want.</li>
+      <li><strong>Changing your mind later:</strong> keep your code. Tell any team member and we delete your recording and retrain without it.</li>
+    </ul>
+    <div class="checks">
+      <label><input type="checkbox" id="c-adult"> The participant is 18 or older.</label>
+      <label><input type="checkbox" id="c-agree"> The participant heard this and agreed to take part.</label>
+    </div>
+    <div class="actions">
+      <button id="consent-go" disabled>Agreed: continue to calibration</button>
+      <button id="consent-no" class="secondary">They declined</button>
+    </div>
+  </section>
+
   <section id="stage" hidden aria-labelledby="activity">
     <p class="muted" id="step"></p>
     <h1 id="activity" tabindex="-1"></h1>
     <p class="muted" id="instruction"></p>
+    <div id="task" class="task" hidden></div>
     <div id="clock" aria-hidden="true"></div>
     <progress id="progress" aria-label="Elapsed activity time" value="0"></progress>
     <p id="phase" role="status"></p>
     <div class="actions">
       <button id="action"></button>
+      <button id="skip" class="secondary" hidden>Skip this activity</button>
       <button id="redo" class="secondary" hidden>Redo activity</button>
-      <button id="end" class="secondary">End session</button>
     </div>
+    <!-- kept apart and plain on purpose: ending the whole session should never be the obvious button -->
+    <div class="stage-foot"><button id="end" class="quiet">End the whole session…</button></div>
   </section>
 
   <section id="done" hidden aria-labelledby="result">
@@ -126,6 +178,9 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.5 var(--font
       <button id="save-again" hidden>Retry save</button>
       <button id="download" class="secondary" hidden>Download labels</button>
       <button id="back" class="secondary" hidden>Back to setup</button>
+    </div>
+    <div id="debrief" class="private" hidden>
+      <p><strong>Thank the participant.</strong> Their code is <strong id="debrief-code"></strong>. Write it down for them: with it they can ask for their data to be deleted at any time. Then tap STOP on the watch.</p>
     </div>
     <details id="review" hidden>
       <summary>Review saved labels</summary>
@@ -138,9 +193,9 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.5 var(--font
 <script>
 const $ = id => document.getElementById(id);
 const DEFAULTS = [
-  ["typing", "Type on the laptop", "Type normally, with both hands as you usually do."],
-  ["writing", "Write on paper", "Use your usual writing hand. Copy a few sentences or take notes."],
-  ["idle", "Read quietly", "Read from the screen or paper. Rest your hands as you normally would."],
+  ["typing", "Type on the laptop", "Type the words in the box below with both hands, as you usually do. Your speed shows when a test ends; keep going until the timer runs out."],
+  ["writing", "Write on paper", "Copy the text below onto paper with your usual writing hand. If you finish, start again."],
+  ["idle", "Read quietly", "Read the passage below at your own pace. Rest your hands as you normally would."],
   ["drinking", "Drink from a cup or bottle", "Take a sip, set it down, and repeat with pauses."],
   ["hold_cup", "Hold a cup or bottle", "Hold it in the hand wearing the watch, without drinking."],
   ["phone_scroll", "Scroll on your phone", "Hold it in the hand wearing the watch and browse a feed."],
@@ -166,6 +221,37 @@ for (const [key, title] of [...DEFAULTS, OPTIONAL]) {
   $("acts").append(label);
 }
 
+// What the participant works on during an activity, so nobody has to open another tab. It appears with the
+// activity and stays up until Next activity, so a reader is never cut off mid-sentence.
+// Typing: typings.gg, an open-source typing test (github.com/briano1905/typings, GPL-3.0) embedded as a page
+// in a frame, the way a YouTube video is embedded; none of its code is copied. Monkeytype and 10fastfingers
+// refuse to be embedded (X-Frame-Options: DENY). The offline box is the fallback when there is no internet.
+const TASKS = {
+  typing: `<iframe id="typer" src="https://typings.gg/" title="Typing test (typings.gg)"></iframe>
+    <p class="muted small">Typing test: typings.gg (open source). Box empty, no internet?
+    <button type="button" class="quiet" id="offline">Type here instead</button></p>
+    <textarea id="offline-box" hidden aria-label="Offline typing box" placeholder="Type anything: what you did today, a recipe, the lyrics you remember…"></textarea>`,
+  idle: `<div class="passage"><h2>How a watch knows what your hand is doing</h2>
+    <p>Fifty times a second, the watch on your wrist asks two tiny sensors a question. The accelerometer reports how hard the watch is being pushed in each of three directions. Even when your arm is perfectly still it never reads zero, because gravity pulls on it all the time. That steady pull turns out to be useful: it tells the watch which way is down, and so how your wrist is tilted. The gyroscope reports how fast the watch is turning around each axis. It says nothing about tilt, but a lot about twists and flicks.</p>
+    <p>Neither sensor knows what a phone is. A model learns the connection from examples. People wear the watch and do one activity at a time while a computer records the signal along with a label saying what they were doing. The signal is then cut into windows of a few seconds, and each window is summed up by numbers such as the average tilt, how much the hand shook and how quickly it turned. The model looks for the numbers that separate typing from scrolling.</p>
+    <p>The hard part is new people. Two people can text in very different postures, and a model trained on one may fail on the other. That is why studies like this one record many participants and always test on someone the model has never seen. Thank you for being one of them.</p></div>`,
+  writing: `<div class="passage"><h2>Copy this onto the paper</h2>
+    <p>A wearable sensor measures the body while it goes about its day. The watch on this wrist records how it tilts and turns, fifty times every second. From those numbers alone, a small model tries to tell work from a phone.</p></div>`,
+};
+
+function showTask(key) {
+  const html = TASKS[key] || "";
+  $("task").innerHTML = html;          // emptying it also unloads the typing test
+  $("task").hidden = !html;
+  $("stage").classList.toggle("with-task", !!html);
+  // While someone types, Tab must never land on a runner button (Enter would then press it): take the
+  // buttons out of the keyboard order. The experimenter uses the mouse.
+  for (const id of ["action", "skip", "redo", "end"]) {
+    if (key === "typing") $(id).setAttribute("tabindex", "-1"); else $(id).removeAttribute("tabindex");
+  }
+  if ($("offline")) $("offline").onclick = () => { $("offline-box").hidden = false; $("offline-box").focus(); };
+}
+
 let blocks = [], rows = [], meta, recording, lastStatus, index = 0, completed = 0;
 let mode = "setup", ticker, startedAt, startedEpochMs, startedWatchMs, busy = false;
 
@@ -182,6 +268,11 @@ function shuffle(keys, seed) {
 
 function plan() {
   const session = $("session").value;
+  if (session === "STUDY") {
+    // The study protocol: the same 8 activities for everyone, 60 s each, one round. The order is shuffled
+    // per participant (seeded by their code) so tiredness or practice doesn't always fall on one activity.
+    return shuffle(DEFAULTS.map(a => a[0]), "STUDY-" + $("participant").value.trim()).map(key => ({key, dur: 60, round: 1}));
+  }
   if (session === "PILOT") return [["typing", 20], ["phone_text", 20]].map(([key, dur]) => ({key, dur, round: 1}));
   if (session === "NATURAL") {
     return [1, 2, 3].flatMap(round => [{key: "natural_work", dur: 180, round}, {key: "natural_phone", dur: 90, round}]);
@@ -206,10 +297,12 @@ function watchReady(status) {
 
 function showPlan() {
   const planBlocks = plan();
-  const fixed = ["PILOT", "NATURAL", "OTHERHAND"].includes($("session").value);
+  const fixed = ["PILOT", "STUDY", "NATURAL", "OTHERHAND"].includes($("session").value);
+  $("roster").hidden = $("session").value !== "STUDY";
   for (const control of [$("dur"), $("rounds"), ...$("acts").querySelectorAll("input")]) control.disabled = fixed;
   const seconds = planBlocks.reduce((total, block) => total + block.dur, 0);
   $("plan").textContent = $("session").value === "PILOT" ? "Laptop typing and phone texting · 20 seconds each"
+    : $("session").value === "STUDY" ? "Consent, calibration, then 8 activities × 1 min in this person's own order · about 12 min"
     : planBlocks.length ? planBlocks.length + " activities · " + Math.ceil(seconds / 60) + " min plus breaks"
     : "Select at least one activity in Recording options.";
   $("go").disabled = !watchReady(lastStatus) || !planBlocks.length;
@@ -258,7 +351,9 @@ function showActivity() {
   $("action").textContent = "Start activity";
   $("action").disabled = false;
   $("redo").hidden = true;
-  $("end").textContent = "End session";
+  $("skip").textContent = "Skip this activity";
+  $("skip").hidden = false;
+  showTask(block.key);
   $("activity").focus();
 }
 
@@ -272,10 +367,51 @@ $("go").onclick = () => {
   rows = [];
   index = 0;
   completed = 0;
-  log("session_open", -1, Date.now(), "", $("setupnote").value.trim());
+  // additional measures go in the note; never a name
+  log("session_open", -1, Date.now(), "", ["strap=" + $("strap").value, $("setupnote").value.trim()].filter(Boolean).join("; "));
   $("setup").hidden = true;
+  if (meta.session === "STUDY") {
+    mode = "consent";
+    $("consent-code").textContent = participant;
+    $("c-adult").checked = $("c-agree").checked = false;
+    $("consent-go").disabled = true;
+    $("consent").hidden = false;
+    $("consent-title").focus();
+  } else {
+    $("stage").hidden = false;
+    showCalibration();
+  }
+};
+
+const randomCode = () => "P-" + Array.from(crypto.getRandomValues(new Uint8Array(4)),
+  b => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[b % 32]).join("");
+$("newcode").onclick = () => { $("participant").value = randomCode(); showPlan(); };
+for (const id of ["c-adult", "c-agree"]) $(id).onchange = () => { $("consent-go").disabled = !($("c-adult").checked && $("c-agree").checked); };
+$("consent-go").onclick = async () => {
+  log("consent", -1, Date.now(), "", "verbal consent; 18+");
+  const name = $("rname").value.trim(), contact = $("rcontact").value.trim();
+  if (name || contact) {
+    try {
+      const r = await fetch("/roster", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({code: meta.participant, name, contact, recording})});
+      if (!(await r.json()).ok) throw new Error();
+      $("rname").value = $("rcontact").value = "";
+    } catch {
+      if (!confirm("The private roster entry could not be saved. Continue without it?")) return;
+    }
+  }
+  $("consent").hidden = true;
   $("stage").hidden = false;
   showCalibration();
+};
+$("consent-no").onclick = () => {
+  mode = "setup";
+  rows = [];
+  $("consent").hidden = true;
+  $("setup").hidden = false;
+  $("rname").value = $("rcontact").value = "";
+  $("participant").value = randomCode();
+  showPlan();
 };
 
 // Calibration: 5 s with both hands resting on the keyboard. The receiver saves that wrist pose as
@@ -294,6 +430,8 @@ function showCalibration() {
   $("action").textContent = "Calibrate";
   $("action").disabled = false;
   $("redo").hidden = true;
+  $("skip").hidden = true;
+  showTask(null);
   $("activity").focus();
 }
 
@@ -335,8 +473,40 @@ function finishActivity() {
   $("action").textContent = index + 1 < blocks.length ? "Next activity" : "Save session";
   $("action").disabled = false;
   $("redo").hidden = false;
-  $("action").focus();
+  $("skip").hidden = true;
+  // Someone mid-sentence in the typing test keeps their focus there; moving it to Next activity would let
+  // their next Space or Enter press it.
+  if (blocks[index].key !== "typing") $("action").focus();
 }
+
+// Move on: the next activity, or save after the last one.
+function nextActivity() {
+  if (++index < blocks.length) showActivity();
+  else endSession();
+}
+
+// Skip: before starting, the activity is left out (logged as a skip). While running, "Enough, next activity"
+// ends the take now and keeps it if it is long enough to label (segment.py trims 3 s from each end and
+// drops anything under 5 s left), then goes straight to the next activity.
+const MIN_KEEP_S = 15;
+$("skip").onclick = () => {
+  if (busy) return;
+  if (mode === "ready") {
+    log("skip", index, Date.now(), "", "skipped before starting");
+    return nextActivity();
+  }
+  if (mode !== "running") return;
+  clearInterval(ticker);
+  const ms = Math.round(performance.now() - startedAt);
+  if (ms >= MIN_KEEP_S * 1000) {
+    log("end", index, startedEpochMs + ms, startedWatchMs + ms, "ended early at " + Math.round(ms / 1000) + " s");
+    completed++;
+  } else {
+    rows = rows.filter(row => row[5] !== index);
+    log("skip", index, Date.now(), "", "stopped after " + Math.round(ms / 1000) + " s, too short to keep");
+  }
+  nextActivity();
+};
 
 function tick() {
   const duration = blocks[index].dur;
@@ -349,11 +519,7 @@ function tick() {
 $("action").onclick = async () => {
   if (busy) return;
   if (mode === "calibrate") return calibrate();
-  if (mode === "between") {
-    if (++index < blocks.length) showActivity();
-    else endSession();
-    return;
-  }
+  if (mode === "between") return nextActivity();
   if (mode !== "ready") return;
   busy = true;
   $("action").disabled = true;
@@ -369,8 +535,11 @@ $("action").onclick = async () => {
     log("start", index, startedEpochMs, startedWatchMs);
     mode = "running";
     $("action").textContent = "Activity running";
-    $("phase").textContent = "Keep going until the timer ends.";
+    $("phase").textContent = blocks[index].key === "typing" ? "Click inside the typing box and type until the timer ends."
+      : "Keep going until the timer ends.";
     $("phase").className = "";
+    $("skip").textContent = "Enough, next activity";
+    if (blocks[index].key === "typing") $("typer")?.focus();
     ticker = setInterval(tick, 100);
     tick();
   } catch (error) {
@@ -393,21 +562,27 @@ $("redo").onclick = () => {
 
 $("end").onclick = () => {
   if (busy) return;
-  if (mode === "running") {
-    if (!confirm("End this session? The current activity will be dropped and completed activities will be saved.")) return;
-    rows = rows.filter(row => row[5] !== index);
-  }
+  // Always asks: this ends everything, not just the current activity (that is the Skip button).
+  const left = blocks.length - index - (mode === "between" ? 1 : 0);
+  const message = mode === "running"
+    ? "End the WHOLE session now? The activity in progress is dropped; finished activities are saved.\n\nTo move on to the next activity instead, press Cancel and use “Enough, next activity”."
+    : "End the WHOLE session now? Finished activities are saved; the remaining " + left + " won’t be recorded.";
+  if (!confirm(message)) return;
+  if (mode === "running") rows = rows.filter(row => row[5] !== index);
   endSession();
 };
 
 function endSession() {
   clearInterval(ticker);
+  showTask(null);
   mode = "done";
   log("session_end");
   $("stage").hidden = true;
   $("done").hidden = false;
   $("checkimg").hidden = true;
   $("review").hidden = true;
+  $("debrief").hidden = meta.session !== "STUDY";
+  $("debrief-code").textContent = meta.participant;
   if (completed) save();
   else {
     $("result").textContent = "No activities completed";
@@ -453,6 +628,7 @@ async function save() {
 $("save-again").onclick = save;
 $("back").onclick = () => {
   mode = "setup";
+  if ($("session").value === "STUDY") $("participant").value = randomCode();
   $("done").hidden = true;
   $("setup").hidden = false;
   showPlan();
@@ -466,6 +642,7 @@ $("download").onclick = () => {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 };
 $("setup").addEventListener("change", showPlan);
+$("participant").value = randomCode();
 showPlan();
 refreshStatus().finally(() => setInterval(refreshStatus, 1000));
 </script>

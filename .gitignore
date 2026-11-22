@@ -10,3 +10,7 @@ FocusWatch/app/build/
 xcuserdata/
 Data Collection/sessions/WATCH_BACKUP/
 Model/lab/.cache/
+
+# participant study: names and contacts never leave the experimenter laptop
+Data Collection/study-private/
+Data Collection/sessions/_withdrawn/

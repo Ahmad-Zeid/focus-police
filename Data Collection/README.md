@@ -1,5 +1,7 @@
 # Focus Police: data collection
 
+**Recording other people:** use the participant study (session STUDY in the runner). Protocol, consent, privacy and withdrawal: [STUDY.md](STUDY.md).
+
 Built 11–12 Nov 2026 for the final project (due **Tue 17 Nov 23:55**). Use it to record labelled wrist-motion sessions and turn each one into a labelled CSV. The whole picture is in `../HANDOFF.md`; this file is the protocol and its history, newest first.
 
 | File | What it does |

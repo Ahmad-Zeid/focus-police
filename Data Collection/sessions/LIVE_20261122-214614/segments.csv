@@ -1,0 +1,9 @@
+index,activity,start_s,end_s,duration_s,end_from
+0,phone_text,44.85,98.85,54.0,watch clock
+1,drinking,124.37,178.37,54.0,watch clock
+2,writing,215.18,269.18,54.0,watch clock
+3,phone_scroll,308.3,362.3,54.0,watch clock
+4,hold_cup,384.36,438.36,54.0,watch clock
+5,phone_call,451.09,505.09,54.0,watch clock
+6,idle,521.15,575.15,54.0,watch clock
+7,typing,604.08,658.08,54.0,watch clock
