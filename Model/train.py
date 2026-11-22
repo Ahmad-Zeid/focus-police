@@ -667,11 +667,20 @@ def main():
                                (otherhand, "## 4. OTHERHAND (phone in the hand without the watch)",
                                 "The expected blind spot of one wrist: the watch hand rests, which looks like work.")):
         if group:
+            gt = tabs(cfg, group)
             s = summarize([{"p": p_off(final, tb["X"])[0], "truth": tb["truth"], "t": tb["t"], "block": tb["block"],
-                            "macro_f1": np.nan, "activity_acc": np.nan} for tb in tabs(cfg, group)], smooth_n)
-            lines += [title, "", text, "", f"Phone caught {pct(s['caught'])}, false alarms {pct(s['false_alarm'])}, "
-                      f"false nudges {s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h), phone activities nudged "
-                      f"{pct(s['phone_nudged'])}.", ""]
+                            "macro_f1": np.nan, "activity_acc": np.nan} for tb in gt], smooth_n)
+            who = ", ".join(f"{g['name']} ({g['participant']}, {g['folder']})" for g in group)
+            lines += [title, "", text, f"Sessions: {who}.", "",
+                      f"Phone caught {pct(s['caught'])}, false alarms {pct(s['false_alarm'])}, "
+                      f"false nudges {s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h), false watch buzzes "
+                      f"{s['false_buzzes']}, phone activities nudged {pct(s['phone_nudged'])}, median nudge delay "
+                      f"{s['median_delay_s']:.0f} s, over {s['on_task_min']:.1f} min not on the phone.", ""]
+            fig = "timeline_" + title.split()[2].lower() + ".png"
+            ps = smooth_mean(p_off(final, gt[0]["X"])[0], smooth_n)
+            plot_timeline(gt[0]["t"], gt[0]["truth"], ps, 0.5, nudges(ps >= 0.5, gt[0]["t"]), os.path.join(out, fig),
+                          f"{group[0]['name']} ({group[0]['participant']}): unscripted work and phone use, as the live page saw it")
+            lines += [f"![{fig}]({fig})", ""]
 
     show = ["window_s", "features", "model", "cv_balanced", "cv_false_alarm", "cv_phone_caught", "cv_false_nudges",
             "cv_macro_f1"]
