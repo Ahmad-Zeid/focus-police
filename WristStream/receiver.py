@@ -333,7 +333,7 @@ class H(BaseHTTPRequestHandler):
                      # by the time since it arrived, without comparing the two system clocks.
                      "watch_epoch_s": last[0] + (now - state["last_seen"])
                      if last and now - state["last_seen"] < STREAM_GAP_S else None,
-                     "recording_labelled": bool(path and any(
+                     "recording_labelled": bool(path and os.path.isdir(os.path.dirname(path)) and any(
                          name.endswith("_runner.csv") for name in os.listdir(os.path.dirname(path))))}
             data = json.dumps(s).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
