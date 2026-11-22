@@ -1,0 +1,17 @@
+index,activity,start_s,end_s,duration_s,end_from
+0,typing,44.89,98.89,54.0,watch clock
+1,phone_text,140.91,194.91,54.0,watch clock
+2,hold_cup,244.3,298.3,54.0,watch clock
+3,phone_scroll,311.6,365.6,54.0,watch clock
+4,writing,422.8,476.8,54.0,watch clock
+5,phone_call,502.72,556.72,54.0,watch clock
+6,idle,583.65,637.65,54.0,watch clock
+7,drinking,731.45,785.45,54.0,watch clock
+8,writing,802.45,856.45,54.0,watch clock
+9,drinking,867.49,921.49,54.0,watch clock
+10,phone_scroll,932.78,986.78,54.0,watch clock
+11,phone_call,1006.31,1060.31,54.0,watch clock
+12,phone_text,1072.04,1126.04,54.0,watch clock
+13,hold_cup,1142.08,1196.08,54.0,watch clock
+14,idle,1208.74,1262.74,54.0,watch clock
+15,typing,1273.72,1327.72,54.0,watch clock
