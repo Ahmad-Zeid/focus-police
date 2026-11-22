@@ -14,7 +14,10 @@ import urllib.request
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 path = args[0]
-url = (args[1] if len(args) > 1 else "http://localhost:8000").rstrip("/") + "/ingest"
+url = (args[1] if len(args) > 1 else "http://127.0.0.1:8000").rstrip("/") + "/ingest"
+# On Windows "localhost" tries IPv6 first and loses ~2 s per request; the receiver then sees 3 s gaps and
+# resets its history as if the watch had stopped. The watch itself always uses an IP address.
+url = url.replace("//localhost:", "//127.0.0.1:").replace("//localhost/", "//127.0.0.1/")
 start_at = float(sys.argv[sys.argv.index("--from") + 1]) if "--from" in sys.argv else 0.0
 
 with open(path, newline="", encoding="utf-8") as f:

@@ -37,8 +37,10 @@ COLS = ["time", "userAccelerationX", "userAccelerationY", "userAccelerationZ",
         "gravityX", "gravityY", "gravityZ", "rotationRateX", "rotationRateY", "rotationRateZ",
         "roll", "pitch", "yaw"]          # Apple Watch (WristStream); the Galaxy app sends its own "cols"
 
-state = {"last_seen": 0.0, "session": None, "device": None, "total": 0, "files": {}, "cols": COLS}
-recent = deque(maxlen=50 * 15)          # last 15 s of rows: the live graphs and the classifier window
+state = {"last_seen": 0.0, "session": None, "device": None, "total": 0, "files": {}, "cols": COLS,
+         "calib": None}                 # calib: {"gravity": [x, y, z], "session", "time"} of the current recording
+recent = deque(maxlen=50 * 40)          # last 40 s of rows: the live graphs, the window and its 30 s context
+CALIB_S = 5                             # seconds of the calibration pose
 NUDGE_S = 10                            # off-task for this long in a row -> the page shows the nudge
 WATCH_NUDGE_S = 60
 STREAM_GAP_S = 3
@@ -72,18 +74,24 @@ def classifier_loop():
                 with lock:
                     clear_prediction()
                     pred.update(model=model.name, test_accuracy=model.test_accuracy,
-                                accuracy_kind=getattr(model, "accuracy_kind", ""), error=None)
+                                accuracy_kind=getattr(model, "accuracy_kind", ""), error=None,
+                                needs_calibration=bool(getattr(model, "needs_calibration", False)))
             with lock:
                 fresh = time.time() - state["last_seen"] < STREAM_GAP_S
                 cols = state["cols"]
                 n = int(model.window_s * 50)
+                n_hist = int(getattr(model, "history_s", model.window_s) * 50)
+                calib = state["calib"]
+                if hasattr(model, "set_calibration"):
+                    model.set_calibration(calib["gravity"] if calib else None)
+                pred["calibrated"] = calib is not None
                 if not fresh or len(recent) < n:
                     clear_prediction()
                     continue
                 t = recent[-1][0]
                 if t == pred["t"]:                  # no new samples since the last prediction
                     continue
-                a = np.array(list(recent)[-n:], dtype=float)
+                a = np.array(list(recent)[-n_hist:], dtype=float)
                 win = {c: a[:, i] for i, c in enumerate(cols) if i < a.shape[1]}
                 label, probs = model.predict(win)
                 on = live_model.is_on_task(label)
@@ -117,6 +125,16 @@ def write_rows(session, rows, cols=None, meta=None):
     with open(path, "a", encoding="utf-8", newline="\n") as f:
         for r in rows:
             f.write(f"{int(r[0] * 1e9)}," + ",".join(f"{v:.6f}" for v in r[1:]) + "\n")
+
+
+def read_calibration(session):
+    """A recording's saved calibration (the receiver may have restarted mid-recording), or None."""
+    path = os.path.join(OUT, f"LIVE_{session}", "calibration.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def merge_runner(old_text, new_text):
@@ -194,10 +212,46 @@ class H(BaseHTTPRequestHandler):
         print(f"\n[runner] {name} -> LIVE_{session}  labelled={'yes' if out['ok'] else 'NO'}")
         self.send_json(out)
 
+    def calibrate(self):
+        """The user holds the calibration pose (hands resting on the keyboard) for CALIB_S seconds, then this
+        is called. Stores the median gravity direction for the live model and in the recording's folder
+        (calibration.json), where train.py finds it."""
+        with lock:
+            fresh = time.time() - state["last_seen"] < STREAM_GAP_S
+            cols, session = state["cols"], state["session"]
+            rows = [r for r in recent if r[0] >= recent[-1][0] - CALIB_S] if recent else []
+        if not fresh or len(rows) < CALIB_S * 50 * 0.8:
+            self.send_json({"ok": False, "error": f"Need {CALIB_S} s of live watch data. Is the watch recording?"})
+            return
+        a = np.array(rows, dtype=float)
+        g = a[:, [cols.index(c) for c in ("gravityX", "gravityY", "gravityZ")]]
+        gu = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-6)
+        turn = np.linalg.norm(a[:, [cols.index(c) for c in ("rotationRateX", "rotationRateY", "rotationRateZ")]], axis=1)
+        spread = float(np.degrees(np.arccos(np.clip(gu @ np.median(gu, 0) / np.linalg.norm(np.median(gu, 0)), -1, 1))).max())
+        if spread > 30 or turn.mean() > 0.6:
+            self.send_json({"ok": False, "error": "The wrist moved during calibration. Rest your hands on the "
+                                                  "keyboard, keep still, and try again."})
+            return
+        gravity = [float(v) for v in np.median(g, axis=0)]
+        calib = {"gravity": gravity, "session": session, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                 "watch_epoch_s": [float(a[0, 0]), float(a[-1, 0])], "max_wobble_deg": round(spread, 1)}
+        with lock:
+            state["calib"] = calib
+            path = state["files"].get(session)
+        if path:
+            with open(os.path.join(os.path.dirname(path), "calibration.json"), "w", encoding="utf-8") as f:
+                json.dump(calib, f, indent=1)
+        face = float(np.degrees(np.arccos(abs(np.median(gu, 0)[2]) / np.linalg.norm(np.median(gu, 0)))))
+        print(f"\n[calibrated] {session}: pose {face:.0f} deg from face-up, wobble {spread:.0f} deg")
+        self.send_json({"ok": True, "face_up_deg": round(face, 1), **calib})
+
     def do_POST(self):
         if urlparse(self.path).path == "/runner-log":
             with runner_lock:
                 self.runner_log(urlparse(self.path))
+            return
+        if urlparse(self.path).path == "/calibrate":
+            self.calibrate()
             return
         if self.path != "/ingest":
             self.send_error(404); return
@@ -218,6 +272,8 @@ class H(BaseHTTPRequestHandler):
                     or (rows and recent and rows[0][0] - recent[-1][0] >= STREAM_GAP_S)):
                 recent.clear()
                 clear_prediction()
+            if session != state["session"]:           # a new recording: its own calibration, if it has one
+                state["calib"] = read_calibration(session)
             state.update(last_seen=now, session=session, device=body.get("device"),
                          cols=body.get("cols") or COLS)
             state["total"] += len(rows)

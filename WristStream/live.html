@@ -49,6 +49,11 @@ td{padding:3px 0;vertical-align:middle} td.n{width:42%} td.v{width:16%;text-alig
 .stripcap{display:flex;justify-content:space-between;font:0.72rem 'Courier New',monospace;color:var(--mute)}
 #nudge{display:none;background:var(--off);color:#fff;padding:14px 20px;font-size:1.2rem;font-weight:700;text-align:center}
 #nudge.show{display:block}
+#calib{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--rule);border-radius:4px;font-size:0.9rem}
+#calib.need{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}
+#calib button{font:700 0.9rem Georgia,serif;padding:7px 14px;border:1px solid var(--ink);background:var(--ink);color:var(--bg);border-radius:3px;cursor:pointer}
+#calib button:disabled{opacity:.5;cursor:default}
+#calibmsg{flex:1;min-width:200px}
 </style>
 </head>
 <body>
@@ -77,6 +82,10 @@ td{padding:3px 0;vertical-align:middle} td.n{width:42%} td.v{width:16%;text-alig
     </section>
   </div>
   <section class="pred">
+    <div id="calib" hidden>
+      <button id="calbtn" type="button">Calibrate</button>
+      <span id="calibmsg" role="status"></span>
+    </div>
     <h2>Prediction</h2>
     <div id="label">—</div>
     <div id="task">waiting for data</div>
@@ -178,8 +187,31 @@ async function status(){
       `The bar above is the model's confidence in its current guess, not its accuracy.` +
       (placeholder ? `<br><span class="placeholder">Placeholder rules so the screen can be tested. Not a result.</span>` : '');
     nudge.classList.toggle('show', !!p.nudge); offfor.textContent = Math.round(p.off_for || 0);
+    calib.hidden = !p.needs_calibration;
+    if (!calibrating){
+      calib.classList.toggle('need', !p.calibrated);
+      calibmsg.textContent = p.calibrated ? 'Calibrated for this recording.'
+        : 'Not calibrated: predictions are less reliable. Rest both hands on the keyboard, then press Calibrate.';
+    }
   }catch(e){}
 }
+
+// Calibration: the user rests both hands on the keyboard as if about to type and keeps still for 5 s.
+// The receiver stores that wrist pose; the model reads every movement relative to it.
+let calibrating = false;
+calbtn.onclick = async () => {
+  calibrating = true; calbtn.disabled = true;
+  for (let s = 5; s > 0; s--){
+    calibmsg.textContent = `Hands resting on the keyboard, keep still… ${s}`;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  try{
+    const r = await (await fetch('/calibrate', {method:'POST'})).json();
+    calibmsg.textContent = r.ok ? `Calibrated (pose ${Math.round(r.face_up_deg)}° from face-up).` : r.error;
+  }catch(e){ calibmsg.textContent = 'Could not reach the receiver.'; }
+  calbtn.disabled = false;
+  setTimeout(() => { calibrating = false; }, 2500);
+};
 
 setInterval(pull, 250); setInterval(status, 500); pull(); status(); requestAnimationFrame(draw);
 </script>

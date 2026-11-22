@@ -4,11 +4,12 @@ A watch on the wrist streams motion to a laptop, which works out what you are do
 
 [`HANDOFF.md`](HANDOFF.md) has the full account: what was built, how it was tested, and why each decision was made.
 
-## Where things stand (13 Nov)
+## Where things stand (22 Nov)
 
-- The watch app, the laptop receiver, the live page, the session runner, automatic labelling and the training pipeline all work.
-- There is only **one labelled recording** (8 activities, about a minute each, one person). The model trained on it is a first try. Tried live, it mixed up holding the phone with drinking and typing with writing, so more data looks necessary.
-- Recording so far used one borrowed Galaxy Watch5 Pro. The app installs on any Wear OS 3+ watch with `FocusWatch/setup-watch.sh`. Training, analysis and replay need no watch.
+- **Detection version 2** (branch `advanced-detection`). Each session now starts with a 5 s **calibration** (hands resting on the keyboard), and the model also reads **wrist angle** and the **last 10–30 s**. On a session from a person the model never saw, phone-vs-work accuracy went from about 68% to 89–94%; on the current test session it is 97% with no false nudges. Measured in [`Model/lab/FINDINGS.md`](Model/lab/FINDINGS.md).
+- Three labelled training sessions from two people (P1, Suleiman). More people and a fresh `TEST` session are the next steps (FINDINGS, "Next data").
+- The runner asks for the calibration automatically; on the live page, press **Calibrate** after starting the watch.
+- Runs on macOS and Windows (`FocusWatch/setup-watch.ps1` on Windows). Training, analysis and replay need no watch.
 
 ## The five commands that matter
 

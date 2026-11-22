@@ -14,6 +14,8 @@ Built 11–12 Nov 2026 for the final project (due **Tue 17 Nov 23:55**). Use it 
 
 Open **http://localhost:8000/runner** (use the receiver's port if different). Choose a session and participant ID, tap **START** on the watch, then click **Start session**. The runner shows one activity at a time.
 
+0. **Calibrate (new, 22 Nov).** The runner first asks you to rest both hands on the laptop keyboard and press **Calibrate**, then keep still for 5 s. The wrist pose is saved as `calibration.json` with the recording, and the model reads every movement relative to it. It is the largest accuracy gain measured (`../Model/lab/FINDINGS.md`). If it says the wrist moved, try again.
+
 1. Get ready, then click **Start activity**. Do the activity until the timer ends. No clapping.
 2. Click **Next activity** and repeat. If the previous attempt went wrong, use **Redo activity** before moving on.
 3. Click **Save session**, wait for the label count, then tap **STOP** on the watch. To stop early, **End session** saves completed activities. Start a fresh watch recording for each new session.

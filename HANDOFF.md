@@ -4,6 +4,13 @@ Written 13 Nov 2026 as a record of what was built, how, and why, for the rest of
 
 Everything here was built between 11 and 13 Nov 2026 by one team member working with an AI coding agent. The final submission is due **Tue 17 Nov 2026, 23:55**.
 
+> **Update 22 Nov 2026: detection version 2.** Sections 9–10 and 12 describe version 1. What changed:
+> calibration (5 s hands-on-keyboard pose, saved per recording as `calibration.json`), wrist-angle and
+> 10/30 s context features in `Model/features.py`, a rewritten `Model/train.py` that treats each session
+> as a continuous stream and simulates the nudge, extra trees, a Calibrate button on the live page and a
+> calibration step in the runner. The experiments behind each choice, including what was tried and
+> rejected, are in `Model/lab/FINDINGS.md`. Windows support: `FocusWatch/setup-watch.ps1`.
+
 ---
 
 ## 1. Status in one screen

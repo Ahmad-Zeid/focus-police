@@ -3,10 +3,23 @@ One definition of windows -> features, so the live model sees exactly what it wa
 
 A "config" is a small dict saved inside model.pkl:
     {"window_s": 2.0, "sensors": "acc+gyro", "freq": True}
+Version 2 configs (22 Nov 2026) add three switches; a config without them behaves exactly as before:
+    "calibrated": True   every 3-axis signal is first rotated so the user's calibration pose (hands resting
+                         on the keyboard) points the watch face up. Removes how the strap sits and each
+                         person's resting posture. Biggest single gain measured: Model/lab/FINDINGS.md.
+    "orient": True       wrist angles in the window: pitch, angle from face-up, roll
+    "context": True      the last 10 s and 30 s: average wrist angle and its spread, movement, stillness.
+                         Needs CONTEXT_S seconds of history, not just the window (history_seconds()).
+features(win, config, R) takes `win` covering history_seconds(config) and the calibration rotation R.
 """
 import numpy as np
 
 HZ = 50
+CONTEXT_S = (10, 30)
+TRIPLES = [("userAccelerationX", "userAccelerationY", "userAccelerationZ"), ("gravityX", "gravityY", "gravityZ"),
+           ("rotationRateX", "rotationRateY", "rotationRateZ"), ("accX", "accY", "accZ")]
+V2_COLUMNS = ["userAccelerationX", "userAccelerationY", "userAccelerationZ", "gravityX", "gravityY", "gravityZ",
+              "rotationRateX", "rotationRateY", "rotationRateZ"]
 
 # which recorded columns each sensor option uses
 SENSORS = {
@@ -52,7 +65,103 @@ def _freq(x, hz=HZ):
     return out
 
 
+def is_v2(config):
+    return bool(config.get("calibrated") or config.get("orient") or config.get("context"))
+
+
+def history_seconds(config):
+    """How much signal features() needs: the window, or the longest context."""
+    return max(float(config["window_s"]), max(CONTEXT_S) if config.get("context") else 0.0)
+
+
+# ------------------------------------------------------------------ calibration
+
+def unit_gravity(gx, gy, gz):
+    g = np.column_stack([gx, gy, gz]).astype(float)
+    return g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-6)
+
+
+def calibration_rotation(gx, gy, gz):
+    """From the gravity samples of the calibration pose (about 5 s, hands resting on the keyboard): the
+    rotation that turns that pose into 'watch face up'. Apply it with rotate()."""
+    base = np.median(unit_gravity(gx, gy, gz), axis=0)
+    base /= np.linalg.norm(base)
+    target = np.array([0.0, 0.0, np.sign(base[2]) or 1.0])
+    v = np.cross(base, target); s = np.linalg.norm(v); c = float(base @ target)
+    if s < 1e-8:
+        return np.eye(3)
+    vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + vx + vx @ vx * ((1 - c) / s ** 2)
+
+
+def rotate(win, R):
+    """Copy of win with every complete 3-axis sensor rotated by R."""
+    out = dict(win)
+    for tri in TRIPLES:
+        if all(c in win for c in tri):
+            v = np.column_stack([win[c] for c in tri]) @ np.asarray(R).T
+            for i, c in enumerate(tri):
+                out[c] = v[:, i]
+    return out
+
+
+# ------------------------------------------------------------------ version 2 features
+
+def _per_sample(win):
+    gu = unit_gravity(win["gravityX"], win["gravityY"], win["gravityZ"])
+    roll = np.arctan2(gu[:, 0], gu[:, 2])
+    move = np.sqrt(win["userAccelerationX"] ** 2 + win["userAccelerationY"] ** 2 + win["userAccelerationZ"] ** 2)
+    turn = np.sqrt(win["rotationRateX"] ** 2 + win["rotationRateY"] ** 2 + win["rotationRateZ"] ** 2)
+    k = 25                                                   # 0.5 s running means for "still"
+    ker = np.ones(k) / k
+    sm = lambda x: np.convolve(np.r_[np.full(k - 1, x[0]), x], ker, "valid")   # noqa: E731  causal
+    still = ((sm(turn) < 0.15) & (sm(move) < 0.03)).astype(float)
+    return {"gx": gu[:, 0], "gy": gu[:, 1], "gz": gu[:, 2],
+            "pitch": np.degrees(np.arcsin(np.clip(gu[:, 1], -1, 1))),
+            "face": np.degrees(np.arccos(np.clip(gu[:, 2], -1, 1))),
+            "roll_s": np.sin(roll), "roll_c": np.cos(roll), "move": move, "turn": turn, "still": still}
+
+
+ORIENT = ("pitch", "face", "roll_s", "roll_c")
+CTX_SPREAD = ("gx", "gy", "gz", "pitch", "face", "roll_s", "roll_c")
+CTX_MEAN = ("move", "turn", "still")
+
+
+def _v2_extra(sig, n_win):
+    f = []
+    for c in ORIENT:
+        v = sig[c][-n_win:]
+        f += [v.mean(), v.std(), v.min(), v.max()]
+    f.append(sig["still"][-n_win:].mean())
+    for s in CONTEXT_S:
+        n = int(s * HZ)
+        part = {c: v[-n:] for c, v in sig.items()}
+        for c in CTX_SPREAD:
+            v = part[c]
+            f += [v.mean(), v.std(ddof=1) if len(v) > 1 else 0.0]
+        for c in CTX_MEAN:
+            f.append(part[c].mean())
+        f += [part["pitch"].max(), part["pitch"].min()]
+    return f
+
+
+def _v2_names(config):
+    names = []
+    if config.get("orient"):
+        names += [f"win_{c}_{s}" for c in ORIENT for s in ("mean", "std", "min", "max")] + ["win_still"]
+    if config.get("context"):
+        for s in CONTEXT_S:
+            for c in CTX_SPREAD:
+                names += [f"ctx{s}_{c}_mean", f"ctx{s}_{c}_std"]
+            names += [f"ctx{s}_{c}_mean" for c in CTX_MEAN] + [f"ctx{s}_pitch_max", f"ctx{s}_pitch_min"]
+    return names
+
+
 def feature_names(config):
+    return _v1_names(config) + (_v2_names(config) if is_v2(config) else [])
+
+
+def _v1_names(config):
     cols, names = SENSORS[config["sensors"]], []
     groups = sorted({c[:-1] for c in cols})
     for c in cols:
@@ -68,8 +177,29 @@ def feature_names(config):
     return names
 
 
-def features(win, config):
-    """win: dict column name -> 1-D numpy array (one window). Returns a flat list of floats."""
+def features(win, config, R=None):
+    """win: dict column name -> 1-D numpy array ending now. For a version 1 config it is exactly one window;
+    for version 2 it covers history_seconds(config) (shorter is fine at the start of a recording).
+    R: calibration rotation (calibration_rotation()); None means not calibrated (identity).
+    Returns a flat list of floats."""
+    if not is_v2(config):
+        return _v1_features(win, config)
+    if config.get("calibrated") and R is not None:
+        win = rotate(win, R)
+    n_win = int(round(config["window_s"] * HZ))
+    f = _v1_features({c: v[-n_win:] for c, v in win.items()}, config)
+    if config.get("orient") or config.get("context"):
+        sig = _per_sample(win)
+        extra = _v2_extra(sig, n_win)
+        n_orient = 4 * len(ORIENT) + 1
+        if config.get("orient"):
+            f += extra[:n_orient]
+        if config.get("context"):
+            f += extra[n_orient:]
+    return f
+
+
+def _v1_features(win, config):
     cols = SENSORS[config["sensors"]]
     groups = sorted({c[:-1] for c in cols})
     f = []

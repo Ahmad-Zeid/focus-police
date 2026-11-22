@@ -4,6 +4,9 @@
 
 Context that is easy to miss:
 
+- Detection version 2 (22 Nov): `Model/lab/FINDINGS.md` has the experiments. Calibration is the biggest gain; `features.py` version 2 configs need history (`history_seconds`) and a calibration rotation. Recordings made with the runner have `calibration.json`; older ones are calibrated from their first 5 s of typing.
+- Re-run the lab (`Model/lab/run.py`) when sessions are added, instead of assuming today's choices still hold. Delete `Model/lab/.cache` after relabelling.
+
 - There is one labelled session and no test session yet. The scores in `Model/REPORT.md` come from holding out parts of that same session, so they are optimistic.
 - Evaluation is done by whole sessions, and the TEST session is not used to choose anything (`HANDOFF.md`, section 9).
 - `Model/features.py` is shared by training and the live page; `WristStream/model.pkl` has to be retrained after it changes.

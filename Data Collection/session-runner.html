@@ -275,8 +275,55 @@ $("go").onclick = () => {
   log("session_open", -1, Date.now(), "", $("setupnote").value.trim());
   $("setup").hidden = true;
   $("stage").hidden = false;
-  showActivity();
+  showCalibration();
 };
+
+// Calibration: 5 s with both hands resting on the keyboard. The receiver saves that wrist pose as
+// calibration.json next to the recording; training and the live model read every movement relative to it,
+// which removes how the strap sits and each person's resting posture.
+function showCalibration() {
+  mode = "calibrate";
+  $("step").textContent = "Before the first activity";
+  $("activity").textContent = "Calibrate the watch";
+  $("instruction").textContent = "Rest both hands on the laptop keyboard as if you are about to type. Keep still while the timer runs.";
+  $("clock").textContent = format(5);
+  $("progress").max = 5;
+  $("progress").value = 0;
+  $("phase").textContent = "Press Calibrate when your hands are in place.";
+  $("phase").className = "";
+  $("action").textContent = "Calibrate";
+  $("action").disabled = false;
+  $("redo").hidden = true;
+  $("activity").focus();
+}
+
+async function calibrate() {
+  busy = true;
+  $("action").disabled = true;
+  $("end").disabled = true;
+  try {
+    for (let s = 5; s > 0; s--) {
+      $("clock").textContent = format(s);
+      $("progress").value = 5 - s;
+      $("phase").textContent = "Keep still…";
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    $("progress").value = 5;
+    const response = await fetch("/calibrate", {method: "POST", signal: AbortSignal.timeout(5000)});
+    const result = await response.json();
+    if (!result.ok) throw new Error(result.error || "Calibration failed.");
+    log("calibrate", -1, Date.now(), "", "pose " + Math.round(result.face_up_deg) + " deg from face-up");
+    showActivity();
+  } catch (error) {
+    $("phase").textContent = error.message + " Press Calibrate to try again.";
+    $("phase").className = "error";
+    $("clock").textContent = format(5);
+    $("action").disabled = false;
+  } finally {
+    busy = false;
+    $("end").disabled = false;
+  }
+}
 
 function finishActivity() {
   clearInterval(ticker);
@@ -301,6 +348,7 @@ function tick() {
 
 $("action").onclick = async () => {
   if (busy) return;
+  if (mode === "calibrate") return calibrate();
   if (mode === "between") {
     if (++index < blocks.length) showActivity();
     else endSession();
