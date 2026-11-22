@@ -98,6 +98,11 @@ ABLATION = {   # reported on TEST for the chosen model and window, never used to
     "+ calibration (full)": FULL,
 }
 REFERENCE = ("Naive Bayes", {"sensors": "acc", "freq": False})   # stand-in for the reference paper's setting
+# The INSTANT model, shown under the main prediction on the live pages: the same classifier on a short window
+# with no 10/30 s context and no averaging, so it reacts within about two seconds (a sip, a switch of activity).
+# The main model stays the decision the nudge uses; this one shows what is happening right now.
+INSTANT = {"window_s": 2.0, "sensors": "all", "freq": True, "orient": True, "calibrated": True}
+DEPLOY_INSTANT = os.path.join(HERE, "..", "WristStream", "model_instant.pkl")
 
 
 def role_of(name):
@@ -523,6 +528,7 @@ def main():
     configs = {(w, fs): {"window_s": w, **cfg} for w in windows_ for fs, cfg in FEATURE_SETS.items()}
     configs.update({(w, f"ablation:{a}"): {"window_s": w, **cfg} for w in windows_ for a, cfg in ABLATION.items()})
     configs.update({(w, "reference"): {"window_s": w, **REFERENCE[1]} for w in windows_})
+    configs[(INSTANT["window_s"], "instant")] = dict(INSTANT)
     configs.update({(w, f"baseline:{b}"): {"window_s": w, **c} for w in windows_ for b, (c, _) in B.RULES.items()})
     uniq = {}
     for key, cfg in configs.items():
@@ -611,6 +617,13 @@ def main():
 
         main_raw, main_sm = test_score(final, te, 1), test_score(final, te, smooth_n)
         right = test_score(final, tabs(cfg, test_m), smooth_n) if test_m else None
+        icfg = configs[(INSTANT["window_s"], "instant")]
+        inst_model = fit(best.model, trn(icfg))
+        inst = test_score(inst_model, tabs(icfg, test), 1)
+        it = tabs(icfg, test)
+        ia = np.concatenate([tb["activity"] for tb in it]); il = ia != None  # noqa: E711
+        ip = np.array([F.group(x) for x in inst_model.classes_[np.vstack([p_off(inst_model, tb["X"])[1] for tb in it]).argmax(1)]])
+        inst_rec = {a: float((ip[il][ia[il] == a] == F.group(a)).mean()) for a in sorted(set(ia[il]))}
         R.update(test_acc=test_acc, test_bin=main_sm["balanced"])
         abl_rows = []
         for a, acfg in ABLATION.items():
@@ -663,8 +676,12 @@ def main():
             row(f"**Chosen model**, smoothed over {smooth_n} predictions as on the live page", main_sm),
             row("Chosen model, each prediction on its own", main_raw)] + (
             [row("Chosen model, watch on the other wrist (TEST mirrored, simulated)", right)] if right else []) + [
+            row(f"Instant model ({INSTANT['window_s']:g} s window, no context, no averaging), shown under the main "
+                "prediction", inst)] + [
             row("Reference-paper setting: raw accelerometer, simple features, Naive Bayes", ref)] + [
             row(n, s_) for n, s_ in rule_rows] + ["",
+            "Instant model, share of each activity recognised as its class on TEST: " + ", ".join(
+                f"{a} {v:.0%}" for a, v in inst_rec.items()) + ". It is not used for the nudge.", "",
             "The threshold rows are the proposal's baseline: one number per window and one cut-off, fitted on the "
             "training sessions (`Model/baseline.py`).", "", "![baselines](baselines.png)", "",
             f"Classes ({', '.join(labs)}): accuracy {test_acc:.1%}, macro-F1 {test_f1:.3f}. "
@@ -773,9 +790,11 @@ def main():
     if not args.no_deploy:
         if args.deploy_all and test:
             everyone = train + test
-            # test and NATURAL sessions join (without mirrored copies): the live model learns from everything
-            final = fit(best.model, trn(cfg) + tabs(cfg, test) + tabs(cfg, natural))
-            test = test + natural
+            # test sessions join (without mirrored copies). NATURAL does not: its labels are only "natural work" /
+            # "natural phone", so the sips and cups inside it would teach the model that drinking is desk work.
+            final = fit(best.model, trn(cfg) + tabs(cfg, test))
+            if test:
+                inst_model = fit(best.model, trn(icfg) + tabs(icfg, test))
             train = train + test                      # only for the name below; scoring is already done
             kind = "balanced on/off on the test person, measured before they were added to this model"
         else:
@@ -790,6 +809,15 @@ def main():
         with open(args.deploy_to, "wb") as f:
             pickle.dump(blob, f)
         print(f"\nlive model saved: {os.path.normpath(args.deploy_to)}")
+        if test:
+            iblob = {**blob, "model": inst_model, "config": dict(INSTANT), "smooth_n": 1,
+                     "name": f"instant: {best.model}, {INSTANT['window_s']:g} s, no context, no averaging",
+                     "classes": list(inst_model.classes_),
+                     "test_accuracy": float(inst["balanced"]), "test_accuracy_kind": "balanced on/off, TEST"}
+            ipath = os.path.join(os.path.dirname(os.path.abspath(args.deploy_to)), os.path.basename(DEPLOY_INSTANT))
+            with open(ipath, "wb") as f:
+                pickle.dump(iblob, f)
+            print(f"instant model saved: {os.path.normpath(ipath)}")
     print(f"report: {os.path.normpath(latest)}   ({time.time() - t_start:.0f} s)")
     if R:
         print(f"TEST: balanced on/off {R['test_bin']:.1%}, activity accuracy {R['test_acc']:.1%}")
