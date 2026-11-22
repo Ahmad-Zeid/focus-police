@@ -54,7 +54,7 @@ class Trained:
         x = np.nan_to_num(np.array([F.features(win, self.config, self.R)], dtype=float))
         self.last.append(self.m.predict_proba(x)[0])
         p = np.mean(self.last, axis=0)
-        probs = {str(c): float(v) for c, v in zip(self.m.classes_, p)}
+        probs = F.group_probs({str(c): float(v) for c, v in zip(self.m.classes_, p)})   # desk work, phone, ...
         return max(probs, key=probs.get), probs
 
 

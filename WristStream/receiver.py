@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 
 import live_model
+from focus_log import FocusLog
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -42,11 +43,14 @@ state = {"last_seen": 0.0, "session": None, "device": None, "total": 0, "files":
 recent = deque(maxlen=50 * 40)          # last 40 s of rows: the live graphs, the window and its 30 s context
 CALIB_S = 5                             # seconds of the calibration pose
 NUDGE_S = 10                            # off-task for this long in a row -> the page shows the nudge
-WATCH_NUDGE_S = 60
+# The watch buzzes after this long off task in a row: two minutes, as in the proposal. For a short demo,
+# set FOCUS_WATCH_NUDGE_S (e.g. FOCUS_WATCH_NUDGE_S=20 python3 receiver.py).
+WATCH_NUDGE_S = float(os.environ.get("FOCUS_WATCH_NUDGE_S", 120))
 STREAM_GAP_S = 3
 pred = {"model": None, "test_accuracy": None, "label": None, "probs": {}, "on_task": None,
         "off_since": None, "error": None, "t": None}
 history = deque(maxlen=2 * 120)         # (time, label, confidence, on_task), 2 per second for 2 min
+focus = {"log": None, "saved": 0.0}     # the whole recording's focus timeline (focus_log.py), for /focus
 PLOT = ["userAccelerationX", "userAccelerationY", "userAccelerationZ",
         "rotationRateX", "rotationRateY", "rotationRateZ", "gravityX", "gravityY", "gravityZ"]
 arrivals = deque(maxlen=60)             # (wall time, n rows) per request, for the rate
@@ -87,6 +91,8 @@ def classifier_loop():
                 pred["calibrated"] = calib is not None
                 if not fresh or len(recent) < n:
                     clear_prediction()
+                    if focus["log"] and recent:
+                        focus["log"].gap(recent[-1][0])
                     continue
                 t = recent[-1][0]
                 if t == pred["t"]:                  # no new samples since the last prediction
@@ -94,17 +100,39 @@ def classifier_loop():
                 a = np.array(list(recent)[-n_hist:], dtype=float)
                 win = {c: a[:, i] for i, c in enumerate(cols) if i < a.shape[1]}
                 label, probs = model.predict(win)
-                on = live_model.is_on_task(label)
+                # off task when the phone classes together reach 0.5: the same rule train.py scores
+                known = {k: v for k, v in probs.items() if live_model.is_on_task(k) is not None}
+                on = (sum(v for k, v in known.items() if live_model.is_on_task(k) is False) < 0.5
+                      if known else live_model.is_on_task(label))
                 off_since = pred["off_since"] if on is False else None
                 if on is False and off_since is None:
                     off_since = t
                 pred.update(label=label, probs=probs, on_task=on, off_since=off_since, t=t, error=None)
                 history.append((t, label, round(probs.get(label, 0), 3), on))
+                log = focus["log"]
+                if log is None or log.session != state["session"]:
+                    log = focus["log"] = FocusLog(state["session"], NUDGE_S, WATCH_NUDGE_S)
+                log.add(t, on)
+                if time.time() - focus["saved"] > 30:
+                    focus["saved"] = time.time()
+                    save_focus_summary(log)
         except Exception as e:                      # a broken model must never stop the recording
             with lock:
                 clear_prediction()
                 pred["error"] = f"{type(e).__name__}: {e}"
             stamp = now_stamp
+
+
+def save_focus_summary(log):
+    """focus_summary.json next to the recording: the session summary and its timeline."""
+    path = state["files"].get(log.session)
+    if not path or not os.path.isdir(os.path.dirname(path)):
+        return
+    try:
+        with open(os.path.join(os.path.dirname(path), "focus_summary.json"), "w", encoding="utf-8") as f:
+            json.dump({**log.summary(), "timeline": log.runs()}, f)
+    except OSError:
+        pass
 
 
 def write_rows(session, rows, cols=None, meta=None):
@@ -340,6 +368,7 @@ class H(BaseHTTPRequestHandler):
             p["off_for"] = round(p["t"] - p["off_since"], 1) if p.get("off_since") and p.get("t") else 0
             p["nudge"] = p["off_for"] >= NUDGE_S
             p["nudge_after"] = NUDGE_S
+            p["watch_nudge_after"] = WATCH_NUDGE_S
             self.send_json(p); return
         if url.path == "/status":
             with lock:
@@ -364,6 +393,25 @@ class H(BaseHTTPRequestHandler):
             data = json.dumps(s).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
             self.wfile.write(data); return
+        if url.path == "/focus-data":
+            with lock:
+                log = focus["log"]
+                live = time.time() - state["last_seen"] < STREAM_GAP_S
+                off_for = round(pred["t"] - pred["off_since"], 1) if pred.get("off_since") and pred.get("t") else 0
+                out = {"connected": live, "calibrated": bool(pred.get("calibrated")),
+                       "needs_calibration": bool(pred.get("needs_calibration")),
+                       "label": pred["label"], "on_task": pred["on_task"], "error": pred["error"],
+                       "confidence": round(pred["probs"].get(pred["label"], 0), 3) if pred["label"] else None,
+                       "off_for": off_for, "nudge_after": NUDGE_S, "watch_nudge_after": WATCH_NUDGE_S,
+                       "model": pred["model"],
+                       "summary": log.summary() if log else None, "timeline": log.runs() if log else []}
+            self.send_json(out); return
+        if url.path == "/focus":
+            self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store"); self.end_headers()
+            with open(FOCUS_PATH, "rb") as f:
+                self.wfile.write(f.read())
+            return
         if url.path == "/runner":
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store"); self.end_headers()
@@ -393,6 +441,7 @@ DATA_DIR = os.path.join(HERE, "..", "Data Collection")
 RUNNER_PATH = os.path.join(DATA_DIR, "session-runner.html")     # served at /runner
 SEGMENT = os.path.join(DATA_DIR, "segment.py")
 PAGE_PATH = os.path.join(HERE, "live.html")   # read on every request, so page edits need no restart
+FOCUS_PATH = os.path.join(HERE, "focus.html")  # the phone page: focus timeline and session summary
 
 
 def lan_ip():
@@ -420,6 +469,7 @@ if __name__ == "__main__":
     ip = lan_ip()
     print(f"WristStream receiver on http://{ip}:{PORT}  (put this address in the watch app)")
     print(f"live page: http://localhost:{PORT}   session runner: http://localhost:{PORT}/runner")
+    print(f"focus page (open on your phone, same Wi-Fi): http://{ip}:{PORT}/focus")
     print(f"saving to {os.path.normpath(OUT)}")
     threading.Thread(target=ticker, daemon=True).start()
     threading.Thread(target=classifier_loop, daemon=True).start()

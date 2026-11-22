@@ -1,0 +1,5 @@
+session,participant,watch_wrist,dominant_hand,posture,index,round,activity,event,epoch_ms,iso_time,note
+PILOT,P2,left,right,sitting,-1,,,session_open,1794907840270,2026-11-17T09:30:40.270Z,""
+PILOT,P2,left,right,sitting,0,1,phone_text,start,1794907861133,2026-11-17T09:31:01.133Z,""
+PILOT,P2,left,right,sitting,0,1,phone_text,end,1794907948066,2026-11-17T09:32:28.066Z,""
+PILOT,P2,left,right,sitting,-1,,,session_end,1794907948067,2026-11-17T09:32:28.067Z,""

@@ -21,6 +21,8 @@ Version 2 (22 Nov 2026). What changed and why is measured in lab/FINDINGS.md; in
 What it does, in order:
   1. Finds every labelled session in ../Data Collection/sessions. The session name decides its role:
         S1, S2, ...  training        TEST  final score only        NATURAL, OTHERHAND  extra tests
+     A role.txt in the session folder overrides the name (e.g. "test" for a session recorded as S2 that is
+     kept aside because it comes from a person the model has never seen).
   2. Leave-one-session-out over the training sessions for every candidate: train on all but one, predict
      the held-out stream, score phone-vs-work. Whole sessions are held out because windows from the same
      sitting look alike and a random split gives flattering numbers.
@@ -55,6 +57,7 @@ from sklearn.preprocessing import StandardScaler
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import baseline as B  # noqa: E402
 import features as F  # noqa: E402
 
 warnings.filterwarnings("ignore")
@@ -69,6 +72,8 @@ TRAIN_EVERY = 2      # training uses every 2nd window (1 s apart): half-overlapp
 LABEL_SHARE = 0.9    # a window belongs to an activity when 90% of its samples do
 STREAM_GAP_S = 3.0   # the receiver forgets its history after a gap this long; so do we
 NUDGE_S = 10         # same as NUDGE_S in WristStream/receiver.py
+WATCH_NUDGE_S = 120  # same as WATCH_NUDGE_S in WristStream/receiver.py: the watch buzz
+NEAR_PHONE_S = 15    # a nudge is correct when labelled phone use lies within this many seconds of it
 SMOOTH = [1, 5, 9]   # average the last k predictions (k x 0.5 s)
 
 MODELS = {
@@ -125,6 +130,25 @@ def session_calibration(folder, df):
     return np.eye(3), "none (no calibration step and no typing)"
 
 
+# Moving the watch to the other wrist mirrors the motion across the body's midline: the x axis of every
+# direction (movement, gravity) flips, and so do the y and z axes of rotation. Training on mirrored copies of
+# every session lets one model serve either wrist (tested 22 Nov: no cost on the left wrist, held-out sessions
+# mirrored to the right went from 85% to 95% balanced).
+MIRROR_FLIP = ("userAccelerationX", "gravityX", "accX", "rotationRateY", "rotationRateZ")
+
+
+def mirrored(sess):
+    """A copy of a session as if the watch had been on the other wrist, recalibrated on the mirrored pose."""
+    df = sess["df"].copy()
+    for c in MIRROR_FLIP:
+        if c in df:
+            df[c] = -df[c]
+    R, how = session_calibration(os.path.join(SESSIONS, sess["folder"]), df)
+    if how == "calibration step":                      # the recorded pose, mirrored the same way
+        R = np.diag([-1.0, 1.0, 1.0]) @ R @ np.diag([-1.0, 1.0, 1.0])
+    return {**sess, "df": df, "R": R, "folder": sess["folder"] + " (mirrored)"}
+
+
 def load_sessions(root):
     out = []
     need = set(F.V2_COLUMNS) | set(F.SENSORS["acc"])
@@ -148,7 +172,12 @@ def load_sessions(root):
             continue
         name = str(labelled.session.iloc[0])
         R, how = session_calibration(folder, df)
-        out.append({"folder": d, "name": name, "role": role_of(name),
+        role = role_of(name)
+        role_file = os.path.join(folder, "role.txt")
+        if os.path.exists(role_file):
+            with open(role_file, encoding="utf-8") as f:
+                role = f.read().split()[0].strip().lower()
+        out.append({"folder": d, "name": name, "role": role,
                     "participant": str(labelled.participant.iloc[0]) if "participant" in df else "?",
                     "df": df, "R": R, "calibration": how})
     return out
@@ -172,8 +201,9 @@ def onoff(labels):
     return np.array([-1 if l is None else (0 if F.is_on_task(l) is False else 1) for l in labels])
 
 
-def table(sess, config):
-    """Every window of one continuous session: features, activity label (or None), on/off, block, end time."""
+def table(sess, config, groups=False):
+    """Every window of one continuous session: features, label the model learns (the activity's group, see
+    features.GROUPS, or the activity itself with groups=False), the recorded activity, on/off, block, time."""
     df = sess["df"]
     t = df.t.to_numpy(float)
     cols = sorted(set(F.V2_COLUMNS) | set(F.SENSORS[config["sensors"]]))
@@ -195,8 +225,9 @@ def table(sess, config):
             labels.append(lab[e - n + 1 + int(np.argmax(b == vals[k]))]); blocks.append(int(vals[k]))
         else:
             labels.append(None); blocks.append(-1)
-    labels = np.array(labels, dtype=object)
-    return {"X": np.nan_to_num(np.array(X, float)), "label": labels, "truth": onoff(labels),
+    activity = np.array(labels, dtype=object)
+    labels = np.array([F.group(l) if groups and l is not None else l for l in labels], dtype=object)
+    return {"X": np.nan_to_num(np.array(X, float)), "label": labels, "activity": activity, "truth": onoff(labels),
             "block": np.array(blocks), "t": t[ends]}
 
 
@@ -224,14 +255,22 @@ def nudges(off, t, nudge_s=NUDGE_S):
     return np.array(fired, dtype=int)
 
 
+def false_count(fired, truth, t):
+    """Nudges with no labelled phone use within NEAR_PHONE_S of them. This includes nudges that fire while
+    switching between activities (unlabelled time), which a person feels just the same."""
+    phone_t = t[truth == 0]
+    return int(sum(not (np.abs(phone_t - t[i]) <= NEAR_PHONE_S).any() for i in fired))
+
+
 def score(truth, off, t, blocks):
-    """Phone-vs-work scores over labelled windows, plus the simulated nudge."""
+    """Phone-vs-work scores over labelled windows, plus the simulated nudge and watch buzz."""
     on_m, off_m = truth == 1, truth == 0
     caught = float(off[off_m].mean()) if off_m.any() else np.nan
     fa = float(off[on_m].mean()) if on_m.any() else np.nan
     fired = nudges(off, t)
-    false_n = int(sum(truth[i] == 1 for i in fired))
-    on_hours = on_m.sum() * HOP / 3600
+    false_n = false_count(fired, truth, t)
+    false_b = false_count(nudges(off, t, WATCH_NUDGE_S), truth, t)
+    on_hours = (truth != 0).sum() * HOP / 3600          # all time that is not phone use, transitions included
     phone_blocks = np.unique(blocks[off_m])
     delays, hit = [], 0
     for b in phone_blocks:
@@ -247,6 +286,7 @@ def score(truth, off, t, blocks):
     return {"balanced": float(np.nanmean([caught, 1 - fa])), "caught": caught, "false_alarm": fa,
             "onoff": float((off[lab] == (truth[lab] == 0)).mean()) if lab.any() else np.nan,
             "false_nudges_per_h": false_n / on_hours if on_hours else np.nan, "false_nudges": false_n,
+            "false_buzzes": false_b, "false_buzzes_per_h": false_b / on_hours if on_hours else np.nan,
             "on_task_min": on_m.sum() * HOP / 60,
             "phone_nudged": hit / len(phone_blocks) if len(phone_blocks) else np.nan,
             "median_delay_s": float(np.median(delays)) if delays else np.nan}
@@ -261,7 +301,7 @@ def p_off(model, X):
 def fit(model_name, tables):
     X = np.vstack([tb["X"][::TRAIN_EVERY][tb["label"][::TRAIN_EVERY] != None] for tb in tables])  # noqa: E711
     y = np.concatenate([tb["label"][::TRAIN_EVERY][tb["label"][::TRAIN_EVERY] != None] for tb in tables])  # noqa: E711
-    m = MODELS[model_name](); m.fit(X, y)
+    m = (MODELS[model_name] if isinstance(model_name, str) else model_name)(); m.fit(X, y)
     return m
 
 
@@ -271,17 +311,20 @@ def halves(tb):
     return [{k: v[tb["t"] < mid] for k, v in tb.items()}, {k: v[tb["t"] >= mid] for k, v in tb.items()}]
 
 
-def cross_validate(model_name, tables, groups=None):
+def cross_validate(model_name, tables, extra=None, groups=None):
     """Leave-one-session-out, or leave-one-PARTICIPANT-out when `groups` (one participant per table) is given:
     every session of the held-out person is scored by a model that never saw that person.
+    extra: tables aligned with `tables` (the mirrored copies) that join training, except the held-out ones'.
     Returns one dict per held-out session with p_off and truth for later scoring."""
     folds = []
     if len(tables) < 2:
-        tables, groups = halves(tables[0]), None
+        tables, extra, groups = halves(tables[0]), None, None
+    extra = extra or []
     if groups is None:
         groups = list(range(len(tables)))
     for k, te in enumerate(tables):
-        m = fit(model_name, [tb for j, tb in enumerate(tables) if groups[j] != groups[k]])
+        m = fit(model_name, [tb for j, tb in enumerate(tables) if groups[j] != groups[k]]
+                + [tb for j, tb in enumerate(extra) if groups[j] != groups[k]])
         p, P = p_off(m, te["X"])
         lab = te["label"] != None  # noqa: E711
         pred = m.classes_[P.argmax(1)]
@@ -295,6 +338,7 @@ def summarize(folds, k=1, threshold=0.5):
     s = [score(f["truth"], smooth_mean(f["p"], k) >= threshold, f["t"], f["block"]) for f in folds]
     out = {key: float(np.nanmean([x[key] for x in s])) for key in s[0]}
     out["false_nudges"] = int(sum(x["false_nudges"] for x in s))
+    out["false_buzzes"] = int(sum(x["false_buzzes"] for x in s))
     out["macro_f1"] = float(np.mean([f["macro_f1"] for f in folds]))
     out["activity_acc"] = float(np.mean([f["activity_acc"] for f in folds]))
     out["per_held_out"] = [round(x["balanced"], 3) for x in s]
@@ -311,17 +355,19 @@ def rank(res):
 
 # ------------------------------------------------------------------ figures and tables
 
-def plot_confusion(y, p, labels, path, title):
-    cm = confusion_matrix(y, p, labels=labels)
+def plot_confusion(y, p, labels, path, title, cols=None):
+    """Rows: actual (labels); columns: predicted (cols, default the same labels)."""
+    cols = labels if cols is None else cols
+    cm = pd.crosstab(pd.Categorical(y, labels), pd.Categorical(p, cols), dropna=False).to_numpy()
     pct = cm / np.maximum(cm.sum(1, keepdims=True), 1)
-    fig, ax = plt.subplots(figsize=(1.0 + 0.75 * len(labels), 0.8 + 0.7 * len(labels)))
-    ax.imshow(pct, cmap="Greys", vmin=0, vmax=1)
+    fig, ax = plt.subplots(figsize=(2.2 + 0.75 * len(cols), 0.8 + 0.6 * len(labels)))
+    ax.imshow(pct, cmap="Greys", vmin=0, vmax=1, aspect="auto")
     for i in range(len(labels)):
-        for j in range(len(labels)):
+        for j in range(len(cols)):
             if cm[i, j]:
                 ax.text(j, i, f"{pct[i, j] * 100:.0f}", ha="center", va="center", fontsize=9,
                         color="white" if pct[i, j] > 0.5 else "black")
-    ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_xticks(range(len(cols))); ax.set_xticklabels(cols, rotation=45, ha="right")
     ax.set_yticks(range(len(labels))); ax.set_yticklabels(labels)
     ax.set_xlabel("predicted"); ax.set_ylabel("actual"); ax.set_title(title, fontsize=10)
     plt.tight_layout(); plt.savefig(path, dpi=120); plt.close()
@@ -343,6 +389,30 @@ def plot_timeline(t, truth, p, threshold, fired, path, title):
     plt.tight_layout(); plt.savefig(path, dpi=120); plt.close()
 
 
+def plot_baselines(names, cv, test, path):
+    """Balanced phone-vs-work accuracy per method: held-out training sessions vs the TEST session."""
+    ink, muted, grid = "#2b2b2a", "#6b6a64", "#e4e3dd"
+    series = [("held-out training sessions (mean)", cv, "#2a78d6"), ("TEST: unseen person", test, "#eb6834")]
+    n, h = len(names), 0.36
+    fig, ax = plt.subplots(figsize=(8, 0.75 * n + 1.1))
+    y = np.arange(n)[::-1]
+    for j, (lab, vals, col) in enumerate(series):
+        yy = y + (0.5 - j) * h
+        ax.barh(yy, vals, height=h - 0.04, color=col, label=lab)
+        for v, yv in zip(vals, yy):
+            ax.text(v + 0.01, yv, f"{v:.0%}", va="center", fontsize=9, color=ink)
+    ax.axvline(0.5, color=muted, lw=0.8, ls=":")
+    ax.text(0.505, y[-1] - 0.6, "chance", fontsize=8, color=muted, ha="left")
+    ax.set_yticks(y); ax.set_yticklabels(names, fontsize=9, color=ink)
+    ax.set_xlim(0, 1.08); ax.set_xticks([0, 0.25, 0.5, 0.75, 1]); ax.set_xticklabels(["0", "25%", "50%", "75%", "100%"])
+    ax.tick_params(colors=muted, length=0); ax.grid(axis="x", color=grid, lw=0.8); ax.set_axisbelow(True)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_xlabel("balanced phone-vs-work accuracy", color=muted, fontsize=9)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.45, 1.0), ncol=2, frameon=False, fontsize=9)
+    plt.tight_layout(); plt.savefig(path, dpi=150); plt.close()
+
+
 def md_table(df):
     cols = list(df.columns)
     lines = ["| " + " | ".join(str(c) for c in cols) + " |", "|" + "|".join("---" for _ in cols) + "|"]
@@ -355,6 +425,16 @@ def md_table(df):
                 cells.append(str(v))
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
+
+
+LOOKALIKES = ["drinking", "hold_cup", "calculator", "other_desk", "phone_call", "phone_text", "phone_scroll"]
+
+
+def flagged_by_activity(ps, tables, k=1):
+    """Share of each activity's windows flagged as phone (after the live smoothing)."""
+    flag = np.concatenate([smooth_mean(p, k) >= 0.5 for p in ps])
+    lab = np.concatenate([tb["activity"] for tb in tables])
+    return {a: float(flag[lab == a].mean()) for a in LOOKALIKES if (lab == a).any()}
 
 
 def pct(v):
@@ -376,6 +456,10 @@ def main():
     ap.add_argument("--by-session", action="store_true", help="hold out sessions, not participants")
     ap.add_argument("--deploy-all", action="store_true", help="after scoring, refit the chosen model on all "
                     "sessions, test included, and deploy that (more people in the live model; no score for it)")
+    ap.add_argument("--no-mirror", action="store_true", help="don't add mirrored (other-wrist) copies to training")
+    ap.add_argument("--train-on-groups", action="store_true",
+                    help="learn the classes in features.GROUPS directly instead of every recorded activity "
+                         "(tried and dropped on 22 Nov; kept to reproduce the comparison)")
     args = ap.parse_args()
     t_start = time.time()
     notes = []
@@ -425,34 +509,44 @@ def main():
     if len(participants) < 3:
         notes.append(f"Training covers {len(participants)} participant(s) ({', '.join(participants)}). "
                      "Accuracy on a new person is the open question; record more people to measure it.")
-    classes = sorted({l for s in train for l in s["df"].label.unique() if l != "none"})
+    classes = sorted({F.group(l) for s in train for l in s["df"].label.unique() if l != "none"})
 
     windows_ = [4.0] if args.quick else WINDOWS
     models_ = ["Extra trees"] if args.quick else CANDIDATE_MODELS
-    everything = train + test + natural + otherhand
+    train_m = [] if args.no_mirror else [mirrored(s) for s in train]
+    test_m = [] if args.no_mirror else [mirrored(s) for s in test]
+    everything = train + test + natural + otherhand + train_m + test_m
+    where = {id(s): i for i, s in enumerate(everything)}
 
     # ---- features: one table per (session, window, feature set), computed in parallel
     configs = {(w, fs): {"window_s": w, **cfg} for w in windows_ for fs, cfg in FEATURE_SETS.items()}
     configs.update({(w, f"ablation:{a}"): {"window_s": w, **cfg} for w in windows_ for a, cfg in ABLATION.items()})
     configs.update({(w, "reference"): {"window_s": w, **REFERENCE[1]} for w in windows_})
+    configs.update({(w, f"baseline:{b}"): {"window_s": w, **c} for w in windows_ for b, (c, _) in B.RULES.items()})
     uniq = {}
     for key, cfg in configs.items():
         uniq.setdefault(json.dumps(cfg, sort_keys=True), cfg)
     print(f"\ncomputing features: {len(uniq)} feature settings x {len(everything)} sessions ...")
     jobs = [(ck, i) for ck in uniq for i in range(len(everything))]
-    done = Parallel(n_jobs=args.jobs)(delayed(table)(everything[i], uniq[ck]) for ck, i in jobs)
+    groups = args.train_on_groups
+    done = Parallel(n_jobs=args.jobs)(delayed(table)(everything[i], uniq[ck], groups) for ck, i in jobs)
     TB = {(ck, i): tb for (ck, i), tb in zip(jobs, done)}
 
     def tabs(cfg, group):
         ck = json.dumps(cfg, sort_keys=True)
-        return [TB[(ck, everything.index(s))] for s in group]
+        return [TB[(ck, where[id(s)])] for s in group]
+
+    def trn(cfg):
+        """Training tables: every training session and, unless --no-mirror, its mirrored copy."""
+        return tabs(cfg, train) + tabs(cfg, train_m)
 
     # ---- candidates, leave-one-session-out
     rows, cv_folds = [], {}
     for w in windows_:
         for fs, cfg in FEATURE_SETS.items():
             for mname in models_:
-                folds = cross_validate(mname, tabs(configs[(w, fs)], train), cv_groups)
+                folds = cross_validate(mname, tabs(configs[(w, fs)], train), tabs(configs[(w, fs)], train_m),
+                                       groups=cv_groups)
                 s = summarize(folds)
                 cv_folds[(w, fs, mname)] = folds
                 rows.append({"window_s": w, "features": fs, "model": mname, "cv_balanced": s["balanced"],
@@ -469,8 +563,21 @@ def main():
     sm = {k: summarize(cv_folds[(best.window_s, best.features, best.model)], k) for k in SMOOTH}
     smooth_n = min(SMOOTH, key=lambda k: (sm[k]["false_nudges"], -round(sm[k]["balanced"], 3), k))
 
+    # ---- the proposal's baseline: one threshold on the wrist, fitted on training windows only
+    w = best.window_s
+    base_cv = [(f"**Chosen model** ({best.model}, smoothed over {smooth_n})",
+                summarize(cv_folds[(w, best.features, best.model)], smooth_n))]
+    rules = {}
+    for b, (bcfg, feat) in B.RULES.items():
+        c = configs[(w, f"baseline:{b}")]
+        rules[b] = (c, B.make(c, feat), feat)
+        base_cv.append((b, summarize(cross_validate(rules[b][1], tabs(c, train), tabs(c, train_m), groups=cv_groups))))
+    rc = configs[(w, "reference")]
+    base_cv.append(("Reference-paper setting (raw accelerometer, Naive Bayes)",
+                    summarize(cross_validate(REFERENCE[0], tabs(rc, train), tabs(rc, train_m), groups=cv_groups))))
+
     # ---- final model
-    final = fit(best.model, tabs(cfg, train))
+    final = fit(best.model, trn(cfg))
     stamp = time.strftime("%Y%m%d-%H%M")
     out = os.path.join(args.out, stamp); os.makedirs(out, exist_ok=True)
     res.to_csv(os.path.join(out, "all_combinations.csv"), index=False)
@@ -483,10 +590,12 @@ def main():
             p, P = p_off(final, tb["X"])
             ts.append((tb, p, P))
         y = np.concatenate([tb["label"] for tb, _, _ in ts])
+        ya = np.concatenate([tb["activity"] for tb, _, _ in ts])
         P = np.vstack([P for _, _, P in ts])
         lab = y != None  # noqa: E711
         pred = final.classes_[P.argmax(1)]
-        yl, pl = y[lab].astype(str), pred[lab]
+        al = ya[lab].astype(str)
+        yl = np.array([F.group(a) for a in al]); pl = np.array([F.group(x) for x in pred[lab]])   # reported classes
         test_acc, test_f1 = accuracy_score(yl, pl), f1_score(yl, pl, average="macro")
 
         def test_score(model, tables, k):
@@ -496,30 +605,51 @@ def main():
                 out_.append(score(tb["truth"], smooth_mean(pp, k) >= 0.5, tb["t"], tb["block"]))
             agg = {key: float(np.nanmean([o[key] for o in out_])) for key in out_[0]}
             agg["false_nudges"] = int(sum(o["false_nudges"] for o in out_))
+            agg["false_buzzes"] = int(sum(o["false_buzzes"] for o in out_))
             return agg
 
         main_raw, main_sm = test_score(final, te, 1), test_score(final, te, smooth_n)
+        right = test_score(final, tabs(cfg, test_m), smooth_n) if test_m else None
         R.update(test_acc=test_acc, test_bin=main_sm["balanced"])
         abl_rows = []
         for a, acfg in ABLATION.items():
             c = configs[(best.window_s, f"ablation:{a}")]
-            m = fit(best.model, tabs(c, train))
+            m = fit(best.model, trn(c))
             abl_rows.append((a, test_score(m, tabs(c, test), smooth_n)))
-        rc = configs[(best.window_s, "reference")]
-        ref = test_score(fit(REFERENCE[0], tabs(rc, train)), tabs(rc, test), 1)
+        ref_model = fit(REFERENCE[0], trn(rc))
+        ref = test_score(ref_model, tabs(rc, test), 1)
+        rule_rows, look = [], {}
+        look[f"Chosen model ({best.model})"] = flagged_by_activity([p for _, p, _ in ts], te, smooth_n)
+        for b, (c, factory, feat) in rules.items():
+            m = fit(factory, trn(c))
+            rule_rows.append((f"{b}: {m.describe(feat)}", test_score(m, tabs(c, test), 1)))
+            look[b] = flagged_by_activity([p_off(m, tb["X"])[0] for tb in tabs(c, test)], tabs(c, test))
+        look["Reference-paper setting"] = flagged_by_activity([p_off(ref_model, tb["X"])[0] for tb in tabs(rc, test)],
+                                                              tabs(rc, test))
+        look_df = pd.DataFrame(look).T.reset_index().rename(columns={"index": "model"})
+        cv_by = dict(base_cv)
+        short = [(f"Classifier ({best.model})", base_cv[0][1], main_sm)] + [
+            (b.replace(" (calibrated)", ""), cv_by[b], s_) for b, (_, s_) in zip(rules, rule_rows)] + [
+            ("Reference paper setting (Naive Bayes)", base_cv[-1][1], ref)]
+        plot_baselines([n_ for n_, _, _ in short], [c["balanced"] for _, c, _ in short],
+                       [t_["balanced"] for _, _, t_ in short], os.path.join(out, "baselines.png"))
 
         def row(name, s):
             return (f"| {name} | **{pct(s['balanced'])}** | {pct(s['caught'])} | {pct(s['false_alarm'])} | "
-                    f"{s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h) | {pct(s['phone_nudged'])} | "
+                    f"{s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h) | "
+                    f"{s['false_buzzes']} ({s['false_buzzes_per_h']:.1f}/h) | {pct(s['phone_nudged'])} | "
                     f"{s['median_delay_s']:.0f} s |")
-        head_row = ("| | Balanced on/off | Phone caught | False alarms | False nudges | Phone activities nudged "
-                    "| Median nudge delay |\n|---|---|---|---|---|---|---|")
+        head_row = ("| | Balanced on/off | Phone caught | False alarms | False nudges (10 s) | False watch buzzes "
+                    "(2 min) | Phone activities nudged | Median nudge delay |\n|---|---|---|---|---|---|---|---|")
         labs = sorted(set(yl) | set(pl))
-        plot_confusion(yl, pl, labs, os.path.join(out, "confusion_test.png"), f"TEST, {best.model}: % of each actual activity")
-        per = pd.DataFrame({"activity": labs,
-                            "flagged as phone": [float((smooth_mean(np.concatenate([p for _, p, _ in ts]), smooth_n)[lab][yl == l] >= 0.5).mean()) if (yl == l).any() else np.nan for l in labs],
-                            "activity recall": [float((pl[yl == l] == l).mean()) if (yl == l).any() else np.nan for l in labs],
-                            "windows": [int((yl == l).sum()) for l in labs]})
+        acts = sorted(set(al))
+        plot_confusion(al, pl, acts, os.path.join(out, "confusion_test.png"),
+                       "TEST: % of each recorded activity per predicted class", cols=sorted(set(pl) | set(yl)))
+        flag = smooth_mean(np.concatenate([p for _, p, _ in ts]), smooth_n)[lab] >= 0.5
+        per = pd.DataFrame({"activity": acts, "reported class": [F.group(l) for l in acts],
+                            "flagged as phone": [float(flag[al == l].mean()) for l in acts],
+                            "recognised as its class": [float((pl[al == l] == F.group(l)).mean()) for l in acts],
+                            "windows": [int((al == l).sum()) for l in acts]})
         tb0, p0, _ = ts[0]
         ps0 = smooth_mean(p0, smooth_n)
         plot_timeline(tb0["t"], tb0["truth"], ps0, 0.5, nudges(ps0 >= 0.5, tb0["t"]), os.path.join(out, "timeline_test.png"),
@@ -530,17 +660,29 @@ def main():
             f"TEST: {test_names}. Scored on the continuous recording, every {HOP:g} s, as the live page runs.", "",
             head_row,
             row(f"**Chosen model**, smoothed over {smooth_n} predictions as on the live page", main_sm),
-            row("Chosen model, each prediction on its own", main_raw),
-            row("Reference-paper setting: raw accelerometer, simple features, Naive Bayes", ref), "",
-            f"Activity names (not needed for the nudge): accuracy {test_acc:.1%}, macro-F1 {test_f1:.3f} over "
-            f"{len(labs)} activities.", "",
+            row("Chosen model, each prediction on its own", main_raw)] + (
+            [row("Chosen model, watch on the other wrist (TEST mirrored, simulated)", right)] if right else []) + [
+            row("Reference-paper setting: raw accelerometer, simple features, Naive Bayes", ref)] + [
+            row(n, s_) for n, s_ in rule_rows] + ["",
+            "The threshold rows are the proposal's baseline: one number per window and one cut-off, fitted on the "
+            "training sessions (`Model/baseline.py`).", "", "![baselines](baselines.png)", "",
+            f"Classes ({', '.join(labs)}): accuracy {test_acc:.1%}, macro-F1 {test_f1:.3f}. "
+            + "The model is trained on every recorded activity; typing, writing, reading and the calculator are "
+            "reported as one class, desk work, and the phone activities as phone, because one wrist cannot tell "
+            "them apart and they need the same response (features.GROUPS). The per-activity table below scores "
+            "each recorded activity against its class.", "",
             "**What each part adds** (same model and window, retrained without the part, scored on TEST):", "",
             head_row] + [row(a, s) for a, s in abl_rows] + [
             "", "![timeline](timeline_test.png)", "", "![confusion](confusion_test.png)", "",
             "Per activity on TEST:", "", md_table(per), "",
+            "**The one challenge: look-alikes** (proposal). Share of each activity's windows flagged as phone on "
+            "TEST. Drinking, holding a cup and the calculator are work and should stay near 0; the phone rows "
+            "should be near 1.", "", md_table(look_df), "",
             "*Balanced on/off* is the mean of *phone caught* (phone windows flagged) and work time left alone "
             "(1 − *false alarms*). A *nudge* fires after "
-            f"{NUDGE_S} s flagged as phone in a row; one during work is false. The delay counts from the start of "
+            f"{NUDGE_S} s flagged as phone in a row (the watch buzzes after {WATCH_NUDGE_S} s); it is false when no "
+            f"labelled phone use lies within {NEAR_PHONE_S} s of it, so nudges while switching between activities "
+            "count as false. Per hour means per hour of time not on the phone. The delay counts from the start of "
             "the labelled phone activity, which begins 3 s after the runner click.", ""]
     else:
         s = summarize(cv_folds[(best.window_s, best.features, best.model)], smooth_n)
@@ -553,11 +695,20 @@ def main():
                                (otherhand, "## 4. OTHERHAND (phone in the hand without the watch)",
                                 "The expected blind spot of one wrist: the watch hand rests, which looks like work.")):
         if group:
+            gt = tabs(cfg, group)
             s = summarize([{"p": p_off(final, tb["X"])[0], "truth": tb["truth"], "t": tb["t"], "block": tb["block"],
-                            "macro_f1": np.nan, "activity_acc": np.nan} for tb in tabs(cfg, group)], smooth_n)
-            lines += [title, "", text, "", f"Phone caught {pct(s['caught'])}, false alarms {pct(s['false_alarm'])}, "
-                      f"false nudges {s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h), phone activities nudged "
-                      f"{pct(s['phone_nudged'])}.", ""]
+                            "macro_f1": np.nan, "activity_acc": np.nan} for tb in gt], smooth_n)
+            who = ", ".join(f"{g['name']} ({g['participant']}, {g['folder']})" for g in group)
+            lines += [title, "", text, f"Sessions: {who}.", "",
+                      f"Phone caught {pct(s['caught'])}, false alarms {pct(s['false_alarm'])}, "
+                      f"false nudges {s['false_nudges']} ({s['false_nudges_per_h']:.1f}/h), false watch buzzes "
+                      f"{s['false_buzzes']}, phone activities nudged {pct(s['phone_nudged'])}, median nudge delay "
+                      f"{s['median_delay_s']:.0f} s, over {s['on_task_min']:.1f} min not on the phone.", ""]
+            fig = "timeline_" + title.split()[2].lower() + ".png"
+            ps = smooth_mean(p_off(final, gt[0]["X"])[0], smooth_n)
+            plot_timeline(gt[0]["t"], gt[0]["truth"], ps, 0.5, nudges(ps >= 0.5, gt[0]["t"]), os.path.join(out, fig),
+                          f"{group[0]['name']} ({group[0]['participant']}): unscripted work and phone use, as the live page saw it")
+            lines += [f"![{fig}]({fig})", ""]
 
     show = ["window_s", "features", "model", "cv_balanced", "cv_false_alarm", "cv_phone_caught", "cv_false_nudges",
             "cv_macro_f1"]
@@ -586,6 +737,17 @@ def main():
         f"false alarms {pct(best.cv_false_alarm)}); per held-out session {best.per_held_out}.",
         f"- {len(res)} candidates compared in {time.time() - t_start:.0f} s.", "",
         "Sessions:", "", md_table(inv), ""]
+    def cv_row(name, s_):
+        return (f"| {name} | **{pct(s_['balanced'])}** | {pct(s_['caught'])} | {pct(s_['false_alarm'])} | "
+                f"{s_['false_nudges']} | {s_['false_buzzes']} | {pct(s_['phone_nudged'])} | {s_['per_held_out']} |")
+    held = ", ".join(f"{s['name']} ({s['participant']})" for s in train)
+    base_lines = ["## 2b. Classifier vs the baselines, holding out one training session at a time", "",
+                  f"Held-out sessions, in order: {held}. A session from a person missing from the other "
+                  "sessions is a cross-person test.", "",
+                  "| | Balanced on/off | Phone caught | False alarms | False nudges (10 s) | False watch buzzes "
+                  "(2 min) | Phone activities nudged | Balanced per held-out session |", "|---|---|---|---|---|---|---|---|"] + [
+                  cv_row(n, s_) for n, s_ in base_cv] + [""]
+    lines = lines + base_lines
     per = summarize(cv_folds[(best.window_s, best.features, best.model)], smooth_n)["per_held_out"]
     who = pd.DataFrame([{"held-out session": f"{x['name']} ({x['folder']})", "participant": x["participant"],
                          "balanced on/off": pct(b)} for x, b in zip(train, per)])
@@ -609,13 +771,14 @@ def main():
 
     if not args.no_deploy:
         if args.deploy_all and test:
-            final = fit(best.model, tabs(cfg, train + test))
+            everyone = train + test
+            final = fit(best.model, tabs(cfg, everyone) + ([] if args.no_mirror else tabs(cfg, [mirrored(s) for s in test]) + tabs(cfg, train_m)))
             train = train + test                      # only for the name below; scoring is already done
             kind = "balanced on/off on the test person, measured before they were added to this model"
         else:
             kind = "balanced on/off task, TEST session"
         name = (f"{best.model}, {best.features}, {cfg['window_s']:g} s, {len(train)} training session(s), "
-                f"{len(classes)} activities (trained {time.strftime('%d %b %H:%M')})")
+                f"{len(classes)} classes (trained {time.strftime('%d %b %H:%M')})")
         blob = {"model": final, "config": cfg, "smooth_n": int(smooth_n), "name": name,
                 "test_accuracy": float(R["test_bin"]) if R else None,
                 "test_accuracy_kind": kind,
