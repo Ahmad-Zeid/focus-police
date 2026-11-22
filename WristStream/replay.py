@@ -17,7 +17,7 @@ path = args[0]
 url = (args[1] if len(args) > 1 else "http://localhost:8000").rstrip("/") + "/ingest"
 start_at = float(sys.argv[sys.argv.index("--from") + 1]) if "--from" in sys.argv else 0.0
 
-with open(path) as f:
+with open(path, newline="", encoding="utf-8") as f:
     r = csv.reader(f)
     cols = next(r)
     rows = [[float(v) for v in row] for row in r]

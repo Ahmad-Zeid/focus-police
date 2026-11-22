@@ -26,6 +26,14 @@ Total: about 15 min of setup, then the recording sessions.
 cd "FocusWatch" && bash setup-watch.sh
 ```
 
+**On Windows** (tested 22 Nov 2026, Windows 11), install `adb` once with `winget install Google.PlatformTools`, create the venv (`python -m venv .venv` then `.venv\Scripts\python -m pip install -r requirements.txt` from the project folder), set the Wi-Fi network to **Private** in Windows Settings so the firewall lets the watch in, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File FocusWatch\setup-watch.ps1
+```
+
+If Windows asks whether to allow `python.exe` on the network, click **Allow** (private networks).
+
 It asks for:
 - the pairing IP:port and code;
 - then the IP:port on the **main** Wireless debugging screen (a different port).

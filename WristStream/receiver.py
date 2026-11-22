@@ -108,13 +108,13 @@ def write_rows(session, rows, cols=None, meta=None):
         new = not os.path.exists(path)
         state["files"][session] = path
         if new:
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(",".join(cols or COLS) + "\n")
-            with open(os.path.join(folder, "meta.json"), "w") as f:
+            with open(os.path.join(folder, "meta.json"), "w", encoding="utf-8") as f:
                 json.dump({"session": session, "cols": cols or COLS, **(meta or {}),
                            "first_seen": time.strftime("%Y-%m-%d %H:%M:%S")}, f, indent=1)
         print(f"\n[new session] {session} -> {os.path.relpath(path, HERE)}")
-    with open(path, "a") as f:
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
         for r in rows:
             f.write(f"{int(r[0] * 1e9)}," + ",".join(f"{v:.6f}" for v in r[1:]) + "\n")
 
@@ -162,7 +162,7 @@ class H(BaseHTTPRequestHandler):
         merged = False
         for old in sorted(os.listdir(folder)):              # a second runner file for the same recording:
             if old.endswith("_runner.csv"):                 # keep both sets of blocks, and the original file
-                with open(os.path.join(folder, old), newline="") as f:
+                with open(os.path.join(folder, old), newline="", encoding="utf-8") as f:
                     previous = f.read()
                 if pinned or "watch_epoch_ms" in previous.partition("\n")[0]:
                     if old == name and previous == text:
@@ -173,17 +173,18 @@ class H(BaseHTTPRequestHandler):
                 k = sum(x.startswith(old + ".part") for x in os.listdir(folder)) + 1
                 os.replace(os.path.join(folder, old), os.path.join(folder, f"{old}.part{k}"))
                 merged = True
-        with open(os.path.join(folder, name), "w") as f:
+        with open(os.path.join(folder, name), "w", encoding="utf-8", newline="") as f:
             f.write(text)
         out = {"saved": True, "folder": f"LIVE_{session}", "ok": False, "output": "", "merged": merged}
         if os.path.exists(SEGMENT):
             time.sleep(3)                                   # let the watch deliver its last samples
             try:
-                p = subprocess.run([sys.executable, SEGMENT, folder], capture_output=True, text=True, timeout=180)
+                p = subprocess.run([sys.executable, SEGMENT, folder], capture_output=True, text=True, timeout=180,
+                                   encoding="utf-8", errors="replace", env={**os.environ, "PYTHONUTF8": "1"})
                 out["ok"] = p.returncode == 0
                 out["output"] = (p.stdout + p.stderr).strip()[-4000:]
                 if out["ok"] and pinned:
-                    with open(os.path.join(folder, "segments.csv"), newline="") as segments:
+                    with open(os.path.join(folder, "segments.csv"), newline="", encoding="utf-8") as segments:
                         out["blocks"] = sum(1 for _ in csv.DictReader(segments))
             except Exception as e:
                 out["ok"] = False

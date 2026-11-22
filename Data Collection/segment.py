@@ -60,7 +60,7 @@ def find_motion_file(folder):
         return s
     # HemiPhysioData files (header has TimeSince1970): use all of them, stitched by clock time,
     # so a session may be one long recording or one file per activity
-    hemi = [f for f in cands if "TimeSince1970" in open(f).readline()]
+    hemi = [f for f in cands if "TimeSince1970" in open(f, encoding="utf-8", errors="replace").readline()]
     if hemi:
         return sorted(hemi)
     cands.sort(key=score, reverse=True)
