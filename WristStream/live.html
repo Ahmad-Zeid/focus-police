@@ -168,7 +168,9 @@ async function status(){
     if (p.error){ label.textContent = 'model error'; task.textContent = p.error; task.style.color = css('--off'); }
     else if (!p.label){ label.textContent = '—'; task.textContent = 'waiting for data'; task.style.color = css('--mute'); }
     else{
-      label.textContent = p.label.replace(/_/g, ' ');
+      const nice = l => ({hold_cup: 'holding a cup', idle: 'reading / idle', phone_scroll: 'scrolling',
+                          phone_text: 'texting', phone_call: 'on a call'})[l] || l.replace(/_/g, ' ');
+      label.textContent = nice(p.label) + (p.activity && p.activity !== p.label ? ': ' + nice(p.activity) : '');
       task.textContent = p.on_task === true ? 'ON TASK' : p.on_task === false ? 'OFF TASK' : '';
       task.style.color = p.on_task === false ? css('--off') : css('--on');
     }

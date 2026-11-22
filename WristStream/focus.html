@@ -166,7 +166,10 @@ function drawStatus(d){
     $('timer').textContent = ''; return;
   }
   const conf = d.confidence != null ? ` · ${Math.round(d.confidence * 100)}% sure` : '';
-  $('activity').textContent = name(d.label) + conf;
+  const DETAIL = {typing: 'typing', writing: 'writing', idle: 'reading / idle', calculator: 'calculator',
+                  other_desk: 'other desk activity', phone_scroll: 'scrolling', phone_text: 'texting', phone_call: 'on a call'};
+  const detail = d.activity && d.activity !== d.label ? `: ${DETAIL[d.activity] || name(d.activity).toLowerCase()}` : '';
+  $('activity').textContent = name(d.label) + detail + conf;
   if (d.on_task){
     st.classList.add('on'); $('statetext').textContent = 'Focused'; $('timer').textContent = '';
   } else {
