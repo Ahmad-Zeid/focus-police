@@ -7,7 +7,9 @@ A watch on the wrist streams motion to a laptop, which works out what you are do
 ## Where things stand (22 Nov)
 
 - **Detection version 2** (branch `advanced-detection`). Each session now starts with a 5 s **calibration** (hands resting on the keyboard), and the model also reads **wrist angle** and the **last 10–30 s**. On a session from a person the model never saw, phone-vs-work accuracy went from about 68% to 89–94%; on the current test session it is 97% with no false nudges. Measured in [`Model/lab/FINDINGS.md`](Model/lab/FINDINGS.md).
-- Three labelled training sessions from two people (P1, Suleiman). More people and a fresh `TEST` session are the next steps (FINDINGS, "Next data").
+- Three labelled training sessions from two people (P1, Suleiman), and a **TEST session from a third person (P2)** who is in no training session (`role.txt` in its folder keeps it aside). On that unseen person: **98.6%** balanced phone-vs-work, 0 false nudges, every phone activity nudged, median nudge delay 10 s ([`Model/REPORT.md`](Model/REPORT.md)).
+- **Baselines from the proposal** (`Model/baseline.py`): a single threshold on wrist movement scores 46–53% (about chance), a threshold on calibrated wrist angle 76–85% (it misses phone calls), the reference paper's setting (raw accelerometer, Naive Bayes) 78–79%. The report also has a look-alike table (cup, bottle, drinking vs phone).
+- The watch buzzes after **2 minutes** off task, as in the proposal; the live page nudges after 10 s and shows the watch countdown. `FOCUS_WATCH_NUDGE_S=20` shortens the buzz for a demo.
 - The runner asks for the calibration automatically; on the live page, press **Calibrate** after starting the watch.
 - Runs on macOS and Windows (`FocusWatch/setup-watch.ps1` on Windows). Training, analysis and replay need no watch.
 
