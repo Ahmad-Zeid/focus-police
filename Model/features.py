@@ -34,9 +34,37 @@ SENSORS = {
             "gravityX", "gravityY", "gravityZ", "rotationRateX", "rotationRateY", "rotationRateZ"],
 }
 
-ON_TASK = {"typing", "writing", "idle", "drinking", "hold_cup", "calculator", "other_desk", "natural_work"}
-OFF_TASK = {"phone_scroll", "phone_text", "phone_call", "natural_phone",
+ON_TASK = {"typing", "writing", "idle", "drinking", "hold_cup", "calculator", "other_desk", "natural_work",
+           "desk_work"}
+OFF_TASK = {"phone_scroll", "phone_text", "phone_call", "natural_phone", "phone",
             "phone_scroll_other", "phone_text_other", "phone_call_other"}
+
+
+# What the system reports: only what one wrist can tell apart. With the watch on the wrist that does not hold
+# the pen, typing, writing and reading all look like a resting wrist (on the unseen-person TEST, idle was read
+# as writing 71% of the time), and they all need the same response. The model is still trained on every
+# recorded activity; group() adds its probabilities up into these classes for the live page and the report.
+# (Training on the groups directly was tried on 22 Nov: no better on held-out training sessions, and held
+# cups were flagged as phone more often, so it was dropped.)
+GROUPS = {"typing": "desk_work", "writing": "desk_work", "idle": "desk_work", "calculator": "desk_work",
+          "other_desk": "desk_work", "natural_work": "desk_work",
+          # drinking and holding a cup stay apart: holding still is a distinct pose and the key look-alike
+          "drinking": "drinking", "hold_cup": "hold_cup",
+          "phone_scroll": "phone", "phone_text": "phone", "phone_call": "phone", "natural_phone": "phone",
+          "phone_scroll_other": "phone", "phone_text_other": "phone", "phone_call_other": "phone"}
+
+
+def group(label):
+    """The reported class of a recorded activity (unknown labels, and group names, pass through)."""
+    return GROUPS.get(label, label)
+
+
+def group_probs(probs):
+    """{activity: probability} -> {class: probability}, summing the activities of each class."""
+    out = {}
+    for k, v in probs.items():
+        out[group(k)] = out.get(group(k), 0.0) + v
+    return out
 
 
 def is_on_task(label):
