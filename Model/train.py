@@ -18,6 +18,8 @@ Version 2 (22 Nov 2026). What changed and why is measured in lab/FINDINGS.md; in
 What it does, in order:
   1. Finds every labelled session in ../Data Collection/sessions. The session name decides its role:
         S1, S2, ...  training        TEST  final score only        NATURAL, OTHERHAND  extra tests
+     A role.txt in the session folder overrides the name (e.g. "test" for a session recorded as S2 that is
+     kept aside because it comes from a person the model has never seen).
   2. Leave-one-session-out over the training sessions for every candidate: train on all but one, predict
      the held-out stream, score phone-vs-work. Whole sessions are held out because windows from the same
      sitting look alike and a random split gives flattering numbers.
@@ -52,6 +54,7 @@ from sklearn.preprocessing import StandardScaler
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import baseline as B  # noqa: E402
 import features as F  # noqa: E402
 
 warnings.filterwarnings("ignore")
@@ -145,7 +148,12 @@ def load_sessions(root):
             continue
         name = str(labelled.session.iloc[0])
         R, how = session_calibration(folder, df)
-        out.append({"folder": d, "name": name, "role": role_of(name),
+        role = role_of(name)
+        role_file = os.path.join(folder, "role.txt")
+        if os.path.exists(role_file):
+            with open(role_file, encoding="utf-8") as f:
+                role = f.read().split()[0].strip().lower()
+        out.append({"folder": d, "name": name, "role": role,
                     "participant": str(labelled.participant.iloc[0]) if "participant" in df else "?",
                     "df": df, "R": R, "calibration": how})
     return out
@@ -258,7 +266,7 @@ def p_off(model, X):
 def fit(model_name, tables):
     X = np.vstack([tb["X"][::TRAIN_EVERY][tb["label"][::TRAIN_EVERY] != None] for tb in tables])  # noqa: E711
     y = np.concatenate([tb["label"][::TRAIN_EVERY][tb["label"][::TRAIN_EVERY] != None] for tb in tables])  # noqa: E711
-    m = MODELS[model_name](); m.fit(X, y)
+    m = (MODELS[model_name] if isinstance(model_name, str) else model_name)(); m.fit(X, y)
     return m
 
 
@@ -350,6 +358,16 @@ def md_table(df):
     return "\n".join(lines)
 
 
+LOOKALIKES = ["drinking", "hold_cup", "calculator", "other_desk", "phone_call", "phone_text", "phone_scroll"]
+
+
+def flagged_by_activity(ps, tables, k=1):
+    """Share of each activity's windows flagged as phone (after the live smoothing)."""
+    flag = np.concatenate([smooth_mean(p, k) >= 0.5 for p in ps])
+    lab = np.concatenate([tb["label"] for tb in tables])
+    return {a: float(flag[lab == a].mean()) for a in LOOKALIKES if (lab == a).any()}
+
+
 def pct(v):
     return "–" if v is None or (isinstance(v, float) and np.isnan(v)) else f"{v:.1%}"
 
@@ -409,6 +427,7 @@ def main():
     configs = {(w, fs): {"window_s": w, **cfg} for w in windows_ for fs, cfg in FEATURE_SETS.items()}
     configs.update({(w, f"ablation:{a}"): {"window_s": w, **cfg} for w in windows_ for a, cfg in ABLATION.items()})
     configs.update({(w, "reference"): {"window_s": w, **REFERENCE[1]} for w in windows_})
+    configs.update({(w, f"baseline:{b}"): {"window_s": w, **c} for w in windows_ for b, (c, _) in B.RULES.items()})
     uniq = {}
     for key, cfg in configs.items():
         uniq.setdefault(json.dumps(cfg, sort_keys=True), cfg)
@@ -442,6 +461,19 @@ def main():
     # ---- smoothing: fewest false nudges, then best balanced, then the shortest (fastest) average
     sm = {k: summarize(cv_folds[(best.window_s, best.features, best.model)], k) for k in SMOOTH}
     smooth_n = min(SMOOTH, key=lambda k: (sm[k]["false_nudges"], -round(sm[k]["balanced"], 3), k))
+
+    # ---- the proposal's baseline: one threshold on the wrist, fitted on training windows only
+    w = best.window_s
+    base_cv = [(f"**Chosen model** ({best.model}, smoothed over {smooth_n})",
+                summarize(cv_folds[(w, best.features, best.model)], smooth_n))]
+    rules = {}
+    for b, (bcfg, feat) in B.RULES.items():
+        c = configs[(w, f"baseline:{b}")]
+        rules[b] = (c, B.make(c, feat), feat)
+        base_cv.append((b, summarize(cross_validate(rules[b][1], tabs(c, train)))))
+    rc = configs[(w, "reference")]
+    base_cv.append(("Reference-paper setting (raw accelerometer, Naive Bayes)",
+                    summarize(cross_validate(REFERENCE[0], tabs(rc, train)))))
 
     # ---- final model
     final = fit(best.model, tabs(cfg, train))
@@ -479,8 +511,17 @@ def main():
             c = configs[(best.window_s, f"ablation:{a}")]
             m = fit(best.model, tabs(c, train))
             abl_rows.append((a, test_score(m, tabs(c, test), smooth_n)))
-        rc = configs[(best.window_s, "reference")]
-        ref = test_score(fit(REFERENCE[0], tabs(rc, train)), tabs(rc, test), 1)
+        ref_model = fit(REFERENCE[0], tabs(rc, train))
+        ref = test_score(ref_model, tabs(rc, test), 1)
+        rule_rows, look = [], {}
+        look[f"Chosen model ({best.model})"] = flagged_by_activity([p for _, p, _ in ts], te, smooth_n)
+        for b, (c, factory, feat) in rules.items():
+            m = fit(factory, tabs(c, train))
+            rule_rows.append((f"{b}: {m.describe(feat)}", test_score(m, tabs(c, test), 1)))
+            look[b] = flagged_by_activity([p_off(m, tb["X"])[0] for tb in tabs(c, test)], tabs(c, test))
+        look["Reference-paper setting"] = flagged_by_activity([p_off(ref_model, tb["X"])[0] for tb in tabs(rc, test)],
+                                                              tabs(rc, test))
+        look_df = pd.DataFrame(look).T.reset_index().rename(columns={"index": "model"})
 
         def row(name, s):
             return (f"| {name} | **{pct(s['balanced'])}** | {pct(s['caught'])} | {pct(s['false_alarm'])} | "
@@ -505,13 +546,19 @@ def main():
             head_row,
             row(f"**Chosen model**, smoothed over {smooth_n} predictions as on the live page", main_sm),
             row("Chosen model, each prediction on its own", main_raw),
-            row("Reference-paper setting: raw accelerometer, simple features, Naive Bayes", ref), "",
+            row("Reference-paper setting: raw accelerometer, simple features, Naive Bayes", ref)] + [
+            row(n, s_) for n, s_ in rule_rows] + ["",
+            "The threshold rows are the proposal's baseline: one number per window and one cut-off, fitted on the "
+            "training sessions (`Model/baseline.py`).", "",
             f"Activity names (not needed for the nudge): accuracy {test_acc:.1%}, macro-F1 {test_f1:.3f} over "
             f"{len(labs)} activities.", "",
             "**What each part adds** (same model and window, retrained without the part, scored on TEST):", "",
             head_row] + [row(a, s) for a, s in abl_rows] + [
             "", "![timeline](timeline_test.png)", "", "![confusion](confusion_test.png)", "",
             "Per activity on TEST:", "", md_table(per), "",
+            "**The one challenge: look-alikes** (proposal). Share of each activity's windows flagged as phone on "
+            "TEST. Drinking, holding a cup and the calculator are work and should stay near 0; the phone rows "
+            "should be near 1.", "", md_table(look_df), "",
             "*Balanced on/off* is the mean of *phone caught* (phone windows flagged) and work time left alone "
             "(1 − *false alarms*). A *nudge* fires after "
             f"{NUDGE_S} s flagged as phone in a row; one during work is false. The delay counts from the start of "
@@ -558,6 +605,17 @@ def main():
         f"false alarms {pct(best.cv_false_alarm)}); per held-out session {best.per_held_out}.",
         f"- {len(res)} candidates compared in {time.time() - t_start:.0f} s.", "",
         "Sessions:", "", md_table(inv), ""]
+    def cv_row(name, s_):
+        return (f"| {name} | **{pct(s_['balanced'])}** | {pct(s_['caught'])} | {pct(s_['false_alarm'])} | "
+                f"{s_['false_nudges']} | {pct(s_['phone_nudged'])} | {s_['per_held_out']} |")
+    held = ", ".join(f"{s['name']} ({s['participant']})" for s in train)
+    base_lines = ["## 2b. Classifier vs the baselines, holding out one training session at a time", "",
+                  f"Held-out sessions, in order: {held}. A session from a person missing from the other "
+                  "sessions is a cross-person test.", "",
+                  "| | Balanced on/off | Phone caught | False alarms | False nudges | Phone activities nudged "
+                  "| Balanced per held-out session |", "|---|---|---|---|---|---|---|"] + [
+                  cv_row(n, s_) for n, s_ in base_cv] + [""]
+    lines = lines + base_lines
     tail = ["## 5. All candidates", "", f"Held out {how}. TEST was not involved.", "",
             md_table(res[show]), "", imp, "",
             "## 6. How to read this", "",
