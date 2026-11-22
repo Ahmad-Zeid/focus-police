@@ -455,7 +455,8 @@ def main():
                     "test set: all their sessions, never used for any choice")
     ap.add_argument("--by-session", action="store_true", help="hold out sessions, not participants")
     ap.add_argument("--deploy-all", action="store_true", help="after scoring, refit the chosen model on all "
-                    "sessions, test included, and deploy that (more people in the live model; no score for it)")
+                    "sessions, test and NATURAL included, and deploy that (more people in the live model; no score "
+                    "for it)")
     ap.add_argument("--no-mirror", action="store_true", help="don't add mirrored (other-wrist) copies to training")
     ap.add_argument("--train-on-groups", action="store_true",
                     help="learn the classes in features.GROUPS directly instead of every recorded activity "
@@ -772,7 +773,9 @@ def main():
     if not args.no_deploy:
         if args.deploy_all and test:
             everyone = train + test
-            final = fit(best.model, trn(cfg) + tabs(cfg, test))   # test sessions join without mirrored copies
+            # test and NATURAL sessions join (without mirrored copies): the live model learns from everything
+            final = fit(best.model, trn(cfg) + tabs(cfg, test) + tabs(cfg, natural))
+            test = test + natural
             train = train + test                      # only for the name below; scoring is already done
             kind = "balanced on/off on the test person, measured before they were added to this model"
         else:

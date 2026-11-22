@@ -44,7 +44,7 @@ def recordings():
             with open(lab, newline="", encoding="utf-8") as f:
                 head = f.readline().strip().split(",")
                 k = head.index("label")
-                minutes = sum(1 for line in f if line.rstrip("\n").split(",")[k] != "none") / 50 / 60
+                minutes = sum(1 for line in f if len(c := line.rstrip("\n").split(",")) > k and c[k] != "none") / 50 / 60
         out.append((folder, r["participant"], r["session"], minutes))
     return out
 

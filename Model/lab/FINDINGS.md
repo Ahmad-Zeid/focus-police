@@ -12,8 +12,8 @@
 
 ## How it was measured
 
-- **Data:** the three labelled training sessions: S1 by P1 (12 Nov, 8.9 min labelled) and S1 + S2 by Suleiman (22 Nov, 13.7 and 14.7 min). Same watch (Galaxy Watch, left wrist), two people.
-- **Leave one session out.** Train on two sessions, predict the third, rotate. Holding out **P1's session** is the cross-person test: the model has only seen Suleiman.
+- **Data:** the three labelled training sessions: S1 by P1 (12 Nov, 8.9 min labelled) and S1 + S2 by P-8BZH (22 Nov, 13.7 and 14.7 min). Same watch (Galaxy Watch, left wrist), two people.
+- **Leave one session out.** Train on two sessions, predict the third, rotate. Holding out **P1's session** is the cross-person test: the model has only seen P-8BZH.
 - **Continuous streams.** Every session is predicted every 0.5 s from start to end, including the transitions between activities, exactly like the live page (`data.py`). Training uses only windows inside one labelled activity.
 - **Scores** (`evaluate.py`): *balanced on/off* = mean of phone caught and work left alone; *false alarms* = work windows flagged as phone; *false nudges/h* = a nudge fires after 10 s flagged in a row, and it is false if it fires during work.
 - **Everything is causal:** a feature at time T uses only samples up to T, so whatever wins here can run live.
@@ -22,7 +22,7 @@
 
 Balanced phone-vs-work accuracy on each held-out session (P1 = the other person):
 
-| Experiment | Mean | P1 | Suleiman S1 | Suleiman S2 | False alarms |
+| Experiment | Mean | P1 | P-8BZH S1 | P-8BZH S2 | False alarms |
 |---|---|---|---|---|---|
 | Old pipeline features, random forest | 85.8% | **67.7%** | 95.6% | 94.2% | 5.0% |
 | + wrist angle | 86.0% | 67.8% | 95.9% | 94.4% | 5.4% |
@@ -60,7 +60,7 @@ Smoothing (`tune_smoothing.py`): averaging the last 9 predictions (4.5 s) at thr
 
 ## Why calibration works
 
-The watch measures the wrist's angle relative to gravity. The same activity looks different when the strap is rotated a few degrees, or when someone rests their forearms higher. `look_calibration.py` shows the sessions' resting poses differ by 34–68°, and that after calibration the same activity lands at similar angles across people (typing pitch: P1 −12° vs Suleiman −30° before; 16° vs 30–33° after).
+The watch measures the wrist's angle relative to gravity. The same activity looks different when the strap is rotated a few degrees, or when someone rests their forearms higher. `look_calibration.py` shows the sessions' resting poses differ by 34–68°, and that after calibration the same activity lands at similar angles across people (typing pitch: P1 −12° vs P-8BZH −30° before; 16° vs 30–33° after).
 
 The rotation is computed from the median gravity direction of the 5 s pose and turns it to "watch face up" (`features.calibration_rotation`). Every 3-axis signal (movement, gravity, gyroscope) is rotated by it before features are computed. The running estimate fails because its reference keeps moving as the session goes on, so the same pose means different things at different times.
 
@@ -68,7 +68,7 @@ The rotation is computed from the median gravity direction of the 5 s pose and t
 
 Asked at the demo: "are you using all three sensors?" The watch records the **accelerometer** and the **gyroscope**, plus Android's fused virtual sensors built from them (linear acceleration = movement, gravity = wrist angle) and a rotation vector. The **magnetometer** is not recorded on its own and no model uses it. Until now every v2 experiment used one sensor set ("all": movement + gravity + gyroscope), so this was tested directly with `sensors.py`: same evaluation as above (extra trees, 4 s, calibrated, leave one session out), only the sensor set changes.
 
-| Sensors | Balanced | False alarms | P1 (other person) | Suleiman S1 | Suleiman S2 |
+| Sensors | Balanced | False alarms | P1 (other person) | P-8BZH S1 | P-8BZH S2 |
 |---|---|---|---|---|---|
 | accelerometer only (raw) | 94.5% | 4.9% | 94.6% | 94.8% | 94.0% |
 | gyroscope only | 74.0% | 6.2% | 64.7% | 81.9% | 75.3% |
@@ -93,7 +93,7 @@ Reading: the **accelerometer carries the detection**; mostly through gravity, i.
 2. **A fresh TEST session**, ideally from someone not in training. Nothing has looked at it, so it gives the number to put in the report.
 3. **NATURAL**: real work and real phone use, switching naturally. Measures transitions and false nudges in realistic use.
 4. **More phone calls** (currently 4 blocks in total) and **OTHERHAND** to measure the known blind spot.
-5. Keep the activity set the same across sessions (P1's session has `other_desk` but no `idle`, Suleiman's the opposite).
+5. Keep the activity set the same across sessions (P1's session has `other_desk` but no `idle`, P-8BZH's the opposite).
 
 ## Files
 

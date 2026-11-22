@@ -24,9 +24,9 @@ Sessions:
 | LIVE_20261117-120325 | PILOT | P1 | ignored | 0.5 | 2 | first 5 s of typing (no calibration step) |
 | LIVE_20261117-120625 | S2 | P2 | test | 9.9 | 8 | first 5 s of typing (no calibration step) |
 | LIVE_20261122-063931 | PILOT | P1 | ignored | 0.5 | 2 | first 5 s of typing (no calibration step) |
-| LIVE_20261122-071736 | S1 | Suleiman | train | 13.7 | 8 | first 5 s of typing (no calibration step) |
-| LIVE_20261122-073853 | S2 | Suleiman | train | 14.7 | 8 | first 5 s of typing (no calibration step) |
-| LIVE_20261122-163642 | S3 | Sleiman | train | 14.3 | 8 | calibration step |
+| LIVE_20261122-071736 | S1 | P-8BZH | train | 13.7 | 8 | first 5 s of typing (no calibration step) |
+| LIVE_20261122-073853 | S2 | P-8BZH | train | 14.7 | 8 | first 5 s of typing (no calibration step) |
+| LIVE_20261122-163642 | S3 | P-8BZH | train | 14.3 | 8 | calibration step |
 | LIVE_20261122-204024 | NATURAL | P2 | natural | 8.6 | 2 | calibration step |
 
 ## 2. The final score (TEST, never used for any choice)
@@ -95,7 +95,7 @@ Phone caught 95.0%, false alarms 0.0%, false nudges 0 (0.0/h), false watch buzze
 
 ## 2b. Classifier vs the baselines, holding out one training session at a time
 
-Held-out sessions, in order: S1 (P1), S1 (Suleiman), S2 (Suleiman), S3 (Sleiman). A session from a person missing from the other sessions is a cross-person test.
+Held-out sessions, in order: S1 (P1), S1 (P-8BZH), S2 (P-8BZH), S3 (P-8BZH). A session from a person missing from the other sessions is a cross-person test.
 
 | | Balanced on/off | Phone caught | False alarms | False nudges (10 s) | False watch buzzes (2 min) | Phone activities nudged | Balanced per held-out session |
 |---|---|---|---|---|---|---|---|
