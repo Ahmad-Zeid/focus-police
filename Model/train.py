@@ -13,7 +13,8 @@ What it does, in order:
      leave-one-session-out: train on all training sessions but one, score on the one left out,
      rotate. Whole sessions are held out because windows from the same session look alike, and
      a random split would give flattering, wrong numbers.
-  4. Picks the combination with the best macro-F1 in step 3. TEST plays no part in the choice.
+  4. Picks the combination with the best balanced on/off-task accuracy in step 3, then the fewest false
+     alarms, then the best activity macro-F1 (see rank()). TEST plays no part in the choice.
   5. Retrains that one on all training sessions and scores it ONCE on TEST, plus NATURAL and OTHERHAND.
   6. Writes results/<time>/ (report.md, all_combinations.csv, figures), copies the report to REPORT.md,
      and saves ../WristStream/model.pkl so the live page uses the new model.
@@ -66,6 +67,7 @@ MODELS = {
 }
 WINDOWS = [1.0, 2.0, 4.0]
 SMOOTH = [1, 3, 5]
+NUDGE_S = 10        # same as NUDGE_S in WristStream/receiver.py: seconds off task in a row before the live page nudges
 
 
 def role_of(name):
@@ -177,9 +179,59 @@ def smooth_predict(proba, classes, order_groups, k):
     return out
 
 
+def onoff_scores(y, p):
+    """What the nudge depends on. phone_caught: share of real phone windows flagged off task.
+    false_alarm: share of real on-task windows flagged off task. balanced: the mean of phone_caught and
+    (1 - false_alarm), so it does not depend on how much phone time a session happens to contain."""
+    yt, pt = onoff(y), onoff(p)
+    caught = float((~pt[~yt]).mean()) if (~yt).any() else float("nan")
+    false_alarm = float((~pt[yt]).mean()) if yt.any() else float("nan")
+    return {"onoff": float((yt == pt).mean()), "phone_caught": caught, "false_alarm": false_alarm,
+            "balanced": float(np.nanmean([caught, 1 - false_alarm]))}
+
+
+def nudge_stats(meta, off_pred, window_s, nudge_s):
+    """Simulates the live nudge on scripted blocks: it fires once off task has been predicted for nudge_s
+    seconds in a row. Windows start every window_s / 2 seconds. A nudge inside an on-task block is false.
+    Returns false nudges per hour of on-task time, the share of phone blocks that got a nudge, and the
+    median delay from the start of a phone block to its nudge."""
+    hop = window_s / 2
+    need = max(1, int(np.ceil(nudge_s / hop)))
+    false_n, on_s, phone_blocks, nudged, delays = 0, 0.0, 0, 0, []
+    for _, idx in meta.groupby(["sess", "block"]).indices.items():
+        idx = idx[np.argsort(meta.t.to_numpy()[idx])]
+        on = F.is_on_task(meta.label.iloc[idx[0]]) is not False
+        run, fired = 0, []
+        for k, off in enumerate(off_pred[idx]):
+            run = run + 1 if off else 0
+            if run == need:                      # fires once per unbroken off-task stretch
+                fired.append(k)
+        if on:
+            on_s += len(idx) * hop
+            false_n += len(fired)
+        else:
+            phone_blocks += 1
+            if fired:
+                nudged += 1
+                delays.append((fired[0] + 1) * hop + window_s / 2)
+    return {"false_per_hour": false_n / (on_s / 3600) if on_s else float("nan"),
+            "phone_nudged": nudged / phone_blocks if phone_blocks else float("nan"),
+            "median_delay_s": float(np.median(delays)) if delays else float("nan")}
+
+
+def rank(res):
+    """The selection rule. The nudge only needs phone vs not phone, so combinations are ranked by
+    balanced on/off accuracy (rounded, so differences in the 4th decimal don't decide), then by fewer
+    false alarms (on-task time flagged as phone: these become false nudges), then by activity macro-F1."""
+    key = res.assign(_b=res.cv_onoff_balanced.round(3), _fa=res.cv_false_alarm.round(3))
+    order = key.sort_values(["_b", "_fa", "cv_macro_f1"], ascending=[False, True, False]).index
+    return res.loc[order].reset_index(drop=True)
+
+
 def cv_one(model_name, X, y, groups):
-    """Leave-one-group-out. Returns mean macro-F1, accuracy, on/off accuracy, and per-group macro-F1."""
-    f1s, accs, bins = [], [], []
+    """Leave-one-group-out. Returns the mean of each score over the held-out groups, plus per-group
+    balanced on/off accuracy."""
+    f1s, accs, scores = [], [], []
     for g in np.unique(groups):
         tr, te = groups != g, groups == g
         m = MODELS[model_name]()
@@ -187,8 +239,12 @@ def cv_one(model_name, X, y, groups):
         p = m.predict(X[te])
         f1s.append(f1_score(y[te], p, average="macro"))
         accs.append(accuracy_score(y[te], p))
-        bins.append(accuracy_score(onoff(y[te]), onoff(p)))
-    return float(np.mean(f1s)), float(np.mean(accs)), float(np.mean(bins)), [round(float(v), 3) for v in f1s]
+        scores.append(onoff_scores(y[te], p))
+    mean = lambda k: float(np.nanmean([s[k] for s in scores]))
+    return {"cv_onoff_balanced": mean("balanced"), "cv_false_alarm": mean("false_alarm"),
+            "cv_phone_caught": mean("phone_caught"), "cv_onoff_accuracy": mean("onoff"),
+            "cv_macro_f1": float(np.mean(f1s)), "cv_accuracy": float(np.mean(accs)),
+            "per_held_out": [round(s["balanced"], 3) for s in scores]}
 
 
 # ------------------------------------------------------------------ figures
@@ -314,13 +370,11 @@ def main():
         X, meta = subset(w, sn, freq, tr_ids)
         y = meta.label.to_numpy()
         groups = (chunk_groups(meta) if group_by_block else meta.sess.to_numpy())
-        f1, acc, binacc, per = cv_one(mname, X, y, groups)
-        return {"window_s": w, "sensors": sn, "features": "time+frequency" if freq else "time",
-                "model": mname, "cv_macro_f1": f1, "cv_accuracy": acc, "cv_onoff_accuracy": binacc,
-                "per_held_out": per, "n_features": X.shape[1], "n_windows": len(y)}
+        return {"window_s": w, "sensors": sn, "features": "time+frequency" if freq else "time", "model": mname,
+                **cv_one(mname, X, y, groups), "n_features": X.shape[1], "n_windows": len(y)}
 
     res = pd.DataFrame(Parallel(n_jobs=args.jobs)(delayed(run)(*c) for c in combos))
-    res = res.sort_values("cv_macro_f1", ascending=False).reset_index(drop=True)
+    res = rank(res)
     best = res.iloc[0]
     cfg = {"window_s": float(best.window_s), "sensors": best.sensors, "freq": best.features != "time"}
     print(res.head(10).drop(columns=["per_held_out"]).to_string(index=False))
@@ -336,8 +390,8 @@ def main():
         proba = m.predict_proba(Xtr[te])
         for k in SMOOTH:
             p = smooth_predict(proba, m.classes_, mtr.sess.to_numpy()[te], k)
-            sm_scores[k].append(accuracy_score(onoff(ytr[te]), onoff(p)))
-    sm_scores = {k: float(np.mean(v)) for k, v in sm_scores.items()}
+            sm_scores[k].append(onoff_scores(ytr[te], p)["balanced"])
+    sm_scores = {k: float(np.nanmean(v)) for k, v in sm_scores.items()}
     smooth_n = max(SMOOTH, key=lambda k: (round(sm_scores[k], 3), -k))
 
     # ---- final model on all training sessions
@@ -382,22 +436,37 @@ def main():
         Xbt, mbt = subset(bw, "acc", False, [idx_of[id(s)] for s in test])
         pbase = base.predict(Xbt)
         base_acc = accuracy_score(mbt.label.to_numpy(), pbase)
-        base_bin = accuracy_score(onoff(mbt.label.to_numpy()), onoff(pbase))
+        s_raw, s_sm, s_base = onoff_scores(y, raw), onoff_scores(y, sm), onoff_scores(mbt.label.to_numpy(), pbase)
+        nd = {k: nudge_stats(m_, ~onoff(p_), w_, NUDGE_S) for k, (m_, p_, w_) in
+              {"raw": (meta, raw, cfg["window_s"]), "sm": (meta, sm, cfg["window_s"]), "base": (mbt, pbase, bw)}.items()}
         R.update(test_acc=test_acc, test_f1=test_f1, test_bin=test_bin)
+
+        def row(name, acc, f1, s, n):
+            return (f"| {name} | {acc} | {f1} | {s['onoff']:.1%} | **{s['balanced']:.1%}** | {s['phone_caught']:.1%} | "
+                    f"{s['false_alarm']:.1%} | {n['false_per_hour']:.1f} | {n['phone_nudged']:.0%} | {n['median_delay_s']:.0f} s |")
         lines += [
             "## 2. The final score (TEST session, never used for any choice)", "",
-            "| | Activity accuracy | Macro-F1 | On/off-task accuracy |", "|---|---|---|---|",
-            f"| **Chosen model**, each window on its own | **{test_acc:.1%}** | {test_f1:.3f} | **{test_bin:.1%}** |",
-            f"| Chosen model, averaged over the last {smooth_n} window(s), as on the live page | {test_acc_s:.1%} | | {test_bin_s:.1%} |",
-            f"| Reference-paper setting: accelerometer only, simple features, Naive Bayes | {base_acc:.1%} | | {base_bin:.1%} |",
+            "| | Activity accuracy | Macro-F1 | On/off accuracy | Balanced on/off | Phone caught | False alarms "
+            f"| False nudges per hour | Phone blocks nudged | Median nudge delay |",
+            "|---|---|---|---|---|---|---|---|---|---|",
+            row("**Chosen model**, each window on its own", f"**{test_acc:.1%}**", f"{test_f1:.3f}", s_raw, nd["raw"]),
+            row(f"Chosen model, averaged over the last {smooth_n} window(s), as on the live page", f"{test_acc_s:.1%}", "",
+                s_sm, nd["sm"]),
+            row("Reference-paper setting: accelerometer only, simple features, Naive Bayes", f"{base_acc:.1%}", "",
+                s_base, nd["base"]),
             "", f"Chance level for {len(classes)} activities is {1 / len(classes):.0%}. "
             f"TEST has {len(y)} windows of {cfg['window_s']:g} s.", "",
+            f"*Phone caught* is the share of real phone windows flagged off task; *false alarms* the share of on-task "
+            f"windows flagged off task. *Nudges* simulate the live page: one fires after {NUDGE_S} s of off task in a row. "
+            "A nudge during an on-task block is false. The delay is counted from the start of the labelled phone block, "
+            "which begins 3 s after the runner click.", "",
             "![confusion](confusion_test.png)", "", "![on/off](confusion_test_onoff.png)", "",
             "Per activity:", "", md_table(per), "",
             "Most common mistakes (actual → predicted, windows): " +
             ("; ".join(f"{a} → {b} ({n})" for n, a, b in worst) if worst else "none") + ".", ""]
     else:
         lines += ["## 2. The final score", "", "No test session. Best cross-validation result: "
+                  f"balanced on/off {best.cv_onoff_balanced:.1%}, false alarms {best.cv_false_alarm:.1%}, "
                   f"macro-F1 {best.cv_macro_f1:.3f}, accuracy {best.cv_accuracy:.1%}, on/off {best.cv_onoff_accuracy:.1%}.", ""]
 
     if natural:
@@ -424,15 +493,15 @@ def main():
         R.update(otherhand=caught)
 
     # ---- comparison tables
-    def best_by(col):
-        g = res.loc[res.groupby(col).cv_macro_f1.idxmax()].sort_values("cv_macro_f1", ascending=False)
-        return g
+    def best_by(col):                                      # res is already ranked: first row per group is its best
+        return res.drop_duplicates(col).reset_index(drop=True)
     by_sensor, by_model, by_window, by_feat = best_by("sensors"), best_by("model"), best_by("window_s"), best_by("features")
-    plot_bars(by_sensor.set_index("sensors").cv_macro_f1, os.path.join(out, "by_sensors.png"),
-              "Best result per sensor choice", "macro-F1, held-out training session")
-    plot_bars(by_model.set_index("model").cv_macro_f1, os.path.join(out, "by_model.png"),
-              "Best result per model", "macro-F1, held-out training session")
-    show = ["window_s", "sensors", "features", "model", "cv_macro_f1", "cv_accuracy", "cv_onoff_accuracy"]
+    plot_bars(by_sensor.set_index("sensors").cv_onoff_balanced, os.path.join(out, "by_sensors.png"),
+              "Best result per sensor choice", f"balanced on/off accuracy, held-out {'part' if group_by_block else 'session'}")
+    plot_bars(by_model.set_index("model").cv_onoff_balanced, os.path.join(out, "by_model.png"),
+              "Best result per model", f"balanced on/off accuracy, held-out {'part' if group_by_block else 'session'}")
+    show = ["window_s", "sensors", "features", "model", "cv_onoff_balanced", "cv_false_alarm", "cv_phone_caught",
+            "cv_macro_f1", "cv_accuracy"]
     imp = ""
     if hasattr(final, "feature_importances_"):
         names = F.feature_names(cfg)
@@ -460,9 +529,13 @@ def main():
         f"- **Sensors:** {best.sensors} ({', '.join(F.SENSORS[best.sensors])})",
         f"- **Window:** {cfg['window_s']:g} s, half-overlapping; **features:** {best.features} ({int(best.n_features)} numbers per window)",
         f"- **Live smoothing:** average of the last {smooth_n} windows "
-        f"(on/off accuracy when holding out {how}: " + ", ".join(f"{k} → {v:.1%}" for k, v in sm_scores.items()) + ")",
-        f"- Chosen by holding out {how}: macro-F1 {best.cv_macro_f1:.3f}, accuracy {best.cv_accuracy:.1%}, "
-        f"on/off {best.cv_onoff_accuracy:.1%}. Score on each held-out part: {best.per_held_out}.",
+        f"(balanced on/off accuracy when holding out {how}: " + ", ".join(f"{k} → {v:.1%}" for k, v in sm_scores.items()) + ")",
+        "- **Selection rule:** best balanced on/off accuracy (the mean of phone caught and on-task time not flagged), "
+        "then fewest false alarms, then activity macro-F1. The nudge only needs phone vs not phone, so mixing up "
+        "typing and writing costs nothing here.",
+        f"- Chosen by holding out {how}: balanced on/off {best.cv_onoff_balanced:.1%} (phone caught "
+        f"{best.cv_phone_caught:.1%}, false alarms {best.cv_false_alarm:.1%}), macro-F1 {best.cv_macro_f1:.3f}, "
+        f"activity accuracy {best.cv_accuracy:.1%}. Balanced on/off on each held-out part: {best.per_held_out}.",
         f"- {len(combos)} combinations compared; {int(best.n_windows)} training windows; {time.time() - t_start:.0f} s to run.", "",
         "Sessions used:", "", md_table(inv), ""]
     tail = [
@@ -477,16 +550,18 @@ def main():
         "## 6. How to read this", "",
         "- **Macro-F1** averages the score of every activity equally, so a model can't look good by only getting the easy ones right.",
         "- **On/off-task accuracy** is what the nudge depends on: typing mistaken for writing costs nothing there, phone mistaken for typing does.",
+        "- **Balanced on/off accuracy** averages phone caught and on-task time correctly left alone, so a session with little phone time can't flatter a model that never flags anything. It decides the model choice.",
+        "- **False alarms** are on-task windows flagged as phone. Enough of them in a row become a false nudge, which is what makes users turn a focus tool off.",
         "- **Held-out session** scores are lower than a random split would give, and more honest: the model is judged on a sitting it never saw.",
         f"- {participant_note}",
         "- Idle (reading, hands resting) counts as on task here. The reference paper counted sitting idle as distracted.", "",
         f"Every combination is in `all_combinations.csv` ({len(res)} rows)."]
     report = "\n".join(head + lines + tail) + "\n"
-    with open(os.path.join(out, "report.md"), "w") as f:
+    with open(os.path.join(out, "report.md"), "w", encoding="utf-8") as f:
         f.write(report)
     real = os.path.abspath(args.out) == os.path.abspath(os.path.join(HERE, "results"))
     latest = os.path.join(HERE if real else args.out, "REPORT.md")
-    with open(latest, "w") as f:                               # the latest report, with image links fixed
+    with open(latest, "w", encoding="utf-8") as f:                              # the latest report, with image links fixed
         f.write(report.replace("](", f"](results/{stamp}/" if real else f"]({stamp}/"))
 
     if not args.no_deploy:

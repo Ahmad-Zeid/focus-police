@@ -1,0 +1,25 @@
+{
+ "session": "20261122-063931",
+ "cols": [
+  "time",
+  "userAccelerationX",
+  "userAccelerationY",
+  "userAccelerationZ",
+  "gravityX",
+  "gravityY",
+  "gravityZ",
+  "rotationRateX",
+  "rotationRateY",
+  "rotationRateZ",
+  "roll",
+  "pitch",
+  "yaw",
+  "accX",
+  "accY",
+  "accZ"
+ ],
+ "device": "samsung SM-R870",
+ "os": "Android 16",
+ "hz": 50,
+ "first_seen": "2026-11-22 06:39:32"
+}

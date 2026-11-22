@@ -1,0 +1,7 @@
+"session","participant","watch_wrist","dominant_hand","posture","index","round","activity","event","epoch_ms","iso_time","note","watch_epoch_ms"
+"PILOT","P1","left","right","sitting","-1","","","session_open","1795322376952","2026-11-22T04:39:36.952Z","",""
+"PILOT","P1","left","right","sitting","0","1","typing","start","1795322380118","2026-11-22T04:39:40.118Z","","1795322378644"
+"PILOT","P1","left","right","sitting","0","1","typing","end","1795322400118","2026-11-22T04:40:00.118Z","","1795322398644"
+"PILOT","P1","left","right","sitting","1","1","phone_text","start","1795322439200","2026-11-22T04:40:39.200Z","","1795322437255"
+"PILOT","P1","left","right","sitting","1","1","phone_text","end","1795322459200","2026-11-22T04:40:59.200Z","","1795322457255"
+"PILOT","P1","left","right","sitting","-1","","","session_end","1795322462901","2026-11-22T04:41:02.901Z","",""
