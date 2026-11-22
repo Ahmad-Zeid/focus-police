@@ -1,0 +1,5 @@
+index,activity,start_s,end_s,duration_s,end_from
+0,natural_work,21.13,195.13,174.0,watch clock
+1,natural_phone,298.67,382.67,84.0,watch clock
+2,natural_work,397.38,571.38,174.0,watch clock
+3,natural_phone,632.52,716.52,84.0,watch clock
