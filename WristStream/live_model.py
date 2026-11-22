@@ -27,6 +27,9 @@ sys.path.insert(0, os.path.join(HERE, "..", "Model"))
 import features as F  # noqa: E402
 
 MODEL_PATH = os.environ.get("FOCUS_MODEL", os.path.join(HERE, "model.pkl"))   # the env var is for testing
+# The instant model (train.py, INSTANT): a short window, no context, no averaging. Shown under the main
+# prediction; never used for the nudge. Missing file: the pages simply show no instant line.
+INSTANT_PATH = os.path.join(os.path.dirname(MODEL_PATH), "model_instant.pkl")
 is_on_task = F.is_on_task
 
 
@@ -85,6 +88,13 @@ class Placeholder:
         probs = {k: 0.1 for k in ("idle", "typing", "phone_scroll")}
         probs[label] = 0.8
         return label, probs
+
+
+def load_instant():
+    if os.path.exists(INSTANT_PATH):
+        with open(INSTANT_PATH, "rb") as f:
+            return Trained(pickle.load(f))
+    return None
 
 
 def load():

@@ -59,22 +59,24 @@ runner_lock = threading.Lock()
 
 
 def clear_prediction():
-    pred.update(label=None, activity=None, probs={}, on_task=None, off_since=None, t=None)
+    pred.update(label=None, activity=None, probs={}, on_task=None, off_since=None, t=None,
+                instant_label=None, instant_activity=None, instant_conf=None)
 
 
 def classifier_loop():
     """Every 0.5 s: run live_model on the last WINDOW_S seconds. Reloads the model when its files change."""
     global live_model
-    model, stamp = None, None
+    model, stamp, instant = None, None, None
     while True:
         time.sleep(0.5)
-        files = [live_model.__file__, live_model.MODEL_PATH]
+        files = [live_model.__file__, live_model.MODEL_PATH, live_model.INSTANT_PATH]
         now_stamp = tuple(os.path.getmtime(f) if os.path.exists(f) else 0 for f in files)
         try:
             if now_stamp != stamp:
                 live_model = importlib.reload(live_model)
                 model, stamp = live_model.load(), now_stamp
-                print(f"\n[model] {model.name}")
+                instant = live_model.load_instant()
+                print(f"\n[model] {model.name}" + (f"\n[model] {instant.name}" if instant else ""))
                 with lock:
                     clear_prediction()
                     pred.update(model=model.name, test_accuracy=model.test_accuracy,
@@ -86,8 +88,9 @@ def classifier_loop():
                 n = int(model.window_s * 50)
                 n_hist = int(getattr(model, "history_s", model.window_s) * 50)
                 calib = state["calib"]
-                if hasattr(model, "set_calibration"):
-                    model.set_calibration(calib["gravity"] if calib else None)
+                for m_ in (model, instant):
+                    if m_ is not None and hasattr(m_, "set_calibration"):
+                        m_.set_calibration(calib["gravity"] if calib else None)
                 pred["calibrated"] = calib is not None
                 if not fresh or len(recent) < n:
                     clear_prediction()
@@ -109,6 +112,13 @@ def classifier_loop():
                     off_since = t
                 pred.update(label=label, activity=getattr(model, "activity", label), probs=probs, on_task=on,
                             off_since=off_since, t=t, error=None)
+                if instant is not None:                 # what is happening right now (no context, no averaging)
+                    ni = int(instant.window_s * 50)
+                    il, ip = instant.predict({c: a[-ni:, i] for i, c in enumerate(cols) if i < a.shape[1]})
+                    pred.update(instant_label=il, instant_activity=getattr(instant, "activity", il),
+                                instant_conf=round(ip.get(il, 0), 3))
+                else:
+                    pred.update(instant_label=None, instant_activity=None, instant_conf=None)
                 history.append((t, label, round(probs.get(label, 0), 3), on))
                 log = focus["log"]
                 if log is None or log.session != state["session"]:
@@ -402,6 +412,8 @@ class H(BaseHTTPRequestHandler):
                 out = {"connected": live, "calibrated": bool(pred.get("calibrated")),
                        "needs_calibration": bool(pred.get("needs_calibration")),
                        "label": pred["label"], "activity": pred.get("activity"), "on_task": pred["on_task"],
+                       "instant_label": pred.get("instant_label"), "instant_activity": pred.get("instant_activity"),
+                       "instant_conf": pred.get("instant_conf"),
                        "error": pred["error"],
                        "confidence": round(pred["probs"].get(pred["label"], 0), 3) if pred["label"] else None,
                        "off_for": off_for, "nudge_after": NUDGE_S, "watch_nudge_after": WATCH_NUDGE_S,
