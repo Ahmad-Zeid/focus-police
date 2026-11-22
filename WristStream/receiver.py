@@ -96,7 +96,10 @@ def classifier_loop():
                 a = np.array(list(recent)[-n_hist:], dtype=float)
                 win = {c: a[:, i] for i, c in enumerate(cols) if i < a.shape[1]}
                 label, probs = model.predict(win)
-                on = live_model.is_on_task(label)
+                # off task when the phone classes together reach 0.5: the same rule train.py scores
+                known = {k: v for k, v in probs.items() if live_model.is_on_task(k) is not None}
+                on = (sum(v for k, v in known.items() if live_model.is_on_task(k) is False) < 0.5
+                      if known else live_model.is_on_task(label))
                 off_since = pred["off_since"] if on is False else None
                 if on is False and off_since is None:
                     off_since = t
