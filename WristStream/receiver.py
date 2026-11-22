@@ -59,7 +59,7 @@ runner_lock = threading.Lock()
 
 
 def clear_prediction():
-    pred.update(label=None, probs={}, on_task=None, off_since=None, t=None)
+    pred.update(label=None, activity=None, probs={}, on_task=None, off_since=None, t=None)
 
 
 def classifier_loop():
@@ -107,7 +107,8 @@ def classifier_loop():
                 off_since = pred["off_since"] if on is False else None
                 if on is False and off_since is None:
                     off_since = t
-                pred.update(label=label, probs=probs, on_task=on, off_since=off_since, t=t, error=None)
+                pred.update(label=label, activity=getattr(model, "activity", label), probs=probs, on_task=on,
+                            off_since=off_since, t=t, error=None)
                 history.append((t, label, round(probs.get(label, 0), 3), on))
                 log = focus["log"]
                 if log is None or log.session != state["session"]:
@@ -400,7 +401,8 @@ class H(BaseHTTPRequestHandler):
                 off_for = round(pred["t"] - pred["off_since"], 1) if pred.get("off_since") and pred.get("t") else 0
                 out = {"connected": live, "calibrated": bool(pred.get("calibrated")),
                        "needs_calibration": bool(pred.get("needs_calibration")),
-                       "label": pred["label"], "on_task": pred["on_task"], "error": pred["error"],
+                       "label": pred["label"], "activity": pred.get("activity"), "on_task": pred["on_task"],
+                       "error": pred["error"],
                        "confidence": round(pred["probs"].get(pred["label"], 0), 3) if pred["label"] else None,
                        "off_for": off_for, "nudge_after": NUDGE_S, "watch_nudge_after": WATCH_NUDGE_S,
                        "model": pred["model"],

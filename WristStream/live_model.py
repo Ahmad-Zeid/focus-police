@@ -54,8 +54,17 @@ class Trained:
         x = np.nan_to_num(np.array([F.features(win, self.config, self.R)], dtype=float))
         self.last.append(self.m.predict_proba(x)[0])
         p = np.mean(self.last, axis=0)
-        probs = F.group_probs({str(c): float(v) for c, v in zip(self.m.classes_, p)})   # desk work, phone, ...
-        return max(probs, key=probs.get), probs
+        fine = {str(c): float(v) for c, v in zip(self.m.classes_, p)}
+        probs = F.group_probs(fine)                          # desk work, drinking, holding a cup, phone
+        # the class follows the on/off rule (phone once the phone activities together reach 0.5), so the page
+        # never says "focused" next to "phone"
+        off = {k for k in probs if F.is_on_task(k) is False}
+        pool = off if sum(probs[k] for k in off) >= 0.5 else (set(probs) - off or set(probs))
+        label = max(pool, key=probs.get)
+        # the most likely recorded activity inside that class (typing, writing, scrolling, ...): a best guess,
+        # since one wrist cannot reliably tell those apart
+        self.activity = max((c for c in fine if F.group(c) == label), key=fine.get, default=label)
+        return label, probs
 
 
 class Placeholder:
