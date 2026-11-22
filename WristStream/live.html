@@ -57,7 +57,7 @@ td{padding:3px 0;vertical-align:middle} td.n{width:42%} td.v{width:16%;text-alig
 </style>
 </head>
 <body>
-<div id="nudge">Off task for <span id="offfor">0</span> s. Phone down?</div>
+<div id="nudge">Off task for <span id="offfor">0</span> s. Phone down? <span id="watchnote" style="font-weight:400"></span></div>
 <header>
   <h1>Focus Police: live</h1>
   <span id="conn">…</span>
@@ -187,6 +187,10 @@ async function status(){
       `The bar above is the model's confidence in its current guess, not its accuracy.` +
       (placeholder ? `<br><span class="placeholder">Placeholder rules so the screen can be tested. Not a result.</span>` : '');
     nudge.classList.toggle('show', !!p.nudge); offfor.textContent = Math.round(p.off_for || 0);
+    if (p.watch_nudge_after) {
+      const left = Math.ceil(p.watch_nudge_after - (p.off_for || 0));
+      watchnote.textContent = left > 0 ? `(watch buzzes in ${left} s)` : '(watch buzzed)';
+    }
     calib.hidden = !p.needs_calibration;
     if (!calibrating){
       calib.classList.toggle('need', !p.calibrated);

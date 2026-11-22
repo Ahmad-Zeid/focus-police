@@ -42,7 +42,9 @@ state = {"last_seen": 0.0, "session": None, "device": None, "total": 0, "files":
 recent = deque(maxlen=50 * 40)          # last 40 s of rows: the live graphs, the window and its 30 s context
 CALIB_S = 5                             # seconds of the calibration pose
 NUDGE_S = 10                            # off-task for this long in a row -> the page shows the nudge
-WATCH_NUDGE_S = 60
+# The watch buzzes after this long off task in a row: two minutes, as in the proposal. For a short demo,
+# set FOCUS_WATCH_NUDGE_S (e.g. FOCUS_WATCH_NUDGE_S=20 python3 receiver.py).
+WATCH_NUDGE_S = float(os.environ.get("FOCUS_WATCH_NUDGE_S", 120))
 STREAM_GAP_S = 3
 pred = {"model": None, "test_accuracy": None, "label": None, "probs": {}, "on_task": None,
         "off_since": None, "error": None, "t": None}
@@ -314,6 +316,7 @@ class H(BaseHTTPRequestHandler):
             p["off_for"] = round(p["t"] - p["off_since"], 1) if p.get("off_since") and p.get("t") else 0
             p["nudge"] = p["off_for"] >= NUDGE_S
             p["nudge_after"] = NUDGE_S
+            p["watch_nudge_after"] = WATCH_NUDGE_S
             self.send_json(p); return
         if url.path == "/status":
             with lock:
