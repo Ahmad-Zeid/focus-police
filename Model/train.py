@@ -344,6 +344,30 @@ def plot_timeline(t, truth, p, threshold, fired, path, title):
     plt.tight_layout(); plt.savefig(path, dpi=120); plt.close()
 
 
+def plot_baselines(names, cv, test, path):
+    """Balanced phone-vs-work accuracy per method: held-out training sessions vs the TEST session."""
+    ink, muted, grid = "#2b2b2a", "#6b6a64", "#e4e3dd"
+    series = [("held-out training sessions (mean)", cv, "#2a78d6"), ("TEST: unseen person", test, "#eb6834")]
+    n, h = len(names), 0.36
+    fig, ax = plt.subplots(figsize=(8, 0.75 * n + 1.1))
+    y = np.arange(n)[::-1]
+    for j, (lab, vals, col) in enumerate(series):
+        yy = y + (0.5 - j) * h
+        ax.barh(yy, vals, height=h - 0.04, color=col, label=lab)
+        for v, yv in zip(vals, yy):
+            ax.text(v + 0.01, yv, f"{v:.0%}", va="center", fontsize=9, color=ink)
+    ax.axvline(0.5, color=muted, lw=0.8, ls=":")
+    ax.text(0.505, y[-1] - 0.6, "chance", fontsize=8, color=muted, ha="left")
+    ax.set_yticks(y); ax.set_yticklabels(names, fontsize=9, color=ink)
+    ax.set_xlim(0, 1.08); ax.set_xticks([0, 0.25, 0.5, 0.75, 1]); ax.set_xticklabels(["0", "25%", "50%", "75%", "100%"])
+    ax.tick_params(colors=muted, length=0); ax.grid(axis="x", color=grid, lw=0.8); ax.set_axisbelow(True)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_xlabel("balanced phone-vs-work accuracy", color=muted, fontsize=9)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.45, 1.0), ncol=2, frameon=False, fontsize=9)
+    plt.tight_layout(); plt.savefig(path, dpi=150); plt.close()
+
+
 def md_table(df):
     cols = list(df.columns)
     lines = ["| " + " | ".join(str(c) for c in cols) + " |", "|" + "|".join("---" for _ in cols) + "|"]
@@ -522,6 +546,12 @@ def main():
         look["Reference-paper setting"] = flagged_by_activity([p_off(ref_model, tb["X"])[0] for tb in tabs(rc, test)],
                                                               tabs(rc, test))
         look_df = pd.DataFrame(look).T.reset_index().rename(columns={"index": "model"})
+        cv_by = dict(base_cv)
+        short = [(f"Classifier ({best.model})", base_cv[0][1], main_sm)] + [
+            (b.replace(" (calibrated)", ""), cv_by[b], s_) for b, (_, s_) in zip(rules, rule_rows)] + [
+            ("Reference paper setting (Naive Bayes)", base_cv[-1][1], ref)]
+        plot_baselines([n_ for n_, _, _ in short], [c["balanced"] for _, c, _ in short],
+                       [t_["balanced"] for _, _, t_ in short], os.path.join(out, "baselines.png"))
 
         def row(name, s):
             return (f"| {name} | **{pct(s['balanced'])}** | {pct(s['caught'])} | {pct(s['false_alarm'])} | "
@@ -549,7 +579,7 @@ def main():
             row("Reference-paper setting: raw accelerometer, simple features, Naive Bayes", ref)] + [
             row(n, s_) for n, s_ in rule_rows] + ["",
             "The threshold rows are the proposal's baseline: one number per window and one cut-off, fitted on the "
-            "training sessions (`Model/baseline.py`).", "",
+            "training sessions (`Model/baseline.py`).", "", "![baselines](baselines.png)", "",
             f"Activity names (not needed for the nudge): accuracy {test_acc:.1%}, macro-F1 {test_f1:.3f} over "
             f"{len(labs)} activities.", "",
             "**What each part adds** (same model and window, retrained without the part, scored on TEST):", "",
