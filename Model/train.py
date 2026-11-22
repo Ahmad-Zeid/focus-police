@@ -772,7 +772,7 @@ def main():
     if not args.no_deploy:
         if args.deploy_all and test:
             everyone = train + test
-            final = fit(best.model, tabs(cfg, everyone) + ([] if args.no_mirror else tabs(cfg, [mirrored(s) for s in test]) + tabs(cfg, train_m)))
+            final = fit(best.model, trn(cfg) + tabs(cfg, test))   # test sessions join without mirrored copies
             train = train + test                      # only for the name below; scoring is already done
             kind = "balanced on/off on the test person, measured before they were added to this model"
         else:
